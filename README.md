@@ -1,4 +1,4 @@
-# NNmoduletools
+# NNModuleTools
 
 A collection of neural network utilities.
 
@@ -20,7 +20,7 @@ A collection of neural network utilities.
 ## Installation
 
 ```shell
-pip install .
+python -m pip install nnmoduletools
 ```
 
 ## Usage
