@@ -414,6 +414,7 @@ class NPZComparer:
         self.ref = NPZWrapper(ref, 'Ref')
         self._keys = None
         self._error_keys = None
+        self._isolated_keys = None
         self.archived_kwargs = {}
 
     # lazy initialization
@@ -428,7 +429,7 @@ class NPZComparer:
                         print(f"Error: Tensor {key} shape not same: {self.target[key].shape} vs {self.ref[key].shape}.")
                         self._error_keys[key] = 1
                     else:
-                        self._keys[key] = 1
+                        self._keys[key] = 1                   
             assert len(self._keys) > 0, 'No common data.'
         assert(isinstance(self._keys, dict) and isinstance(self._error_keys, dict)), "Keys not initialized!"
         return self._keys
@@ -439,11 +440,34 @@ class NPZComparer:
             self.keys
         assert(isinstance(self._keys, dict) and isinstance(self._error_keys, dict)), "Keys not initialized!"
         return self._error_keys
-
-    def info(self, tensor=None):
+    
+    @property
+    def isolated_keys(self):
+        if self._isolated_keys is None:
+            self._isolated_keys = {
+                "target": {key for key in self.target if key not in self.keys},
+                "ref": {key for key in self.ref if key not in self.keys}
+            }
+            assert len(self._isolated_keys) > 0, 'No isolated data.'
+        assert isinstance(self._isolated_keys, dict), "Isolated keys not initialized!"
+        return self._isolated_keys
+    
+    def summary(self, show_isolated=False):
+        print(f"Target tensors: {len(self.target)}, Ref tensors: {len(self.ref)}, Common tensors: {len(self.keys)}, Unmatched tensors:{len(self.error_keys)}")
+        if show_isolated:
+            if len(self.isolated_keys["target"]) > 0:
+                print("Isolated target tensors:")
+                for key in self.isolated_keys["target"]:
+                    print("tensor='%s'," % key, "#shape", self.target[key].shape)
+            if len(self.isolated_keys["ref"]) > 0:
+                print("Isolated ref tensors:")
+                for key in self.isolated_keys["ref"]:
+                    print("tensor='%s'," % key, "#shape", self.ref[key].shape)
+        
+    def info(self, tensor=None, show_isolated=False):
         if tensor is None:
             tensors = self.keys
-            print(f"Target tensors: {len(self.target)}, Ref tensors: {len(self.ref)}, Common tensors: {len(self.keys)}, Unmatched tensors:{len(self.error_keys)}")
+            self.summary(show_isolated=show_isolated)
         else:
             if isinstance(tensor, list):
                 for ts in tensor:
@@ -458,7 +482,7 @@ class NPZComparer:
         if tensor is None:
             tensors = self.keys
             if verbose:
-                print(f"Target tensors: {len(self.target)}, Ref tensors: {len(self.ref)}, Common tensors: {len(self.keys)}, Unmatched tensors:{len(self.error_keys)}")
+                self.summary()
         else:
             if isinstance(tensor, list):
                 for ts in tensor:
@@ -550,18 +574,14 @@ class NPZComparer:
                 key, abs_tol=abs_tol, rel_tol=rel_tol,  **kwargs)
             real_mean, real_min, real_max = get_data_dist(darray, data_mask)
             abs_mean, abs_min, abs_max = get_data_dist(np.abs(darray), data_mask)
-            print("max diff neg %s, pos %s, mean %s\nabs diff min %s, max %s, mean %s" % (real_min, real_max, real_mean, abs_min, abs_max, abs_mean))
+            print(f'Max of {"rel" if rel_tol != 0 else "abs"} diff: neg {real_min}, pos {real_max}, mean {real_mean}')
+            print(f'Abs of {"rel" if rel_tol != 0 else "abs"} diff: min {abs_min}, max {abs_max}, mean {abs_mean}')
             print(*(f"{k}: {v}" for k, v in compare.items()))
-            if vmin is None or vmax is None:
-                diff_max = max(abs(real_min), abs(real_max))
-                if diff_max == 0:
-                    diff_max += 1
-                vmin_ = - diff_max
-                vmax_ = diff_max
-            else:
-                vmin_ = vmin
-                vmax_ = vmax
-            print("vmin %s vmax %s" % (vmin_, vmax_))
+            diff_max = max(abs(real_min if vmin is None else vmin), abs(real_max if vmax is None else vmax))
+            if diff_max == 0:
+                diff_max += 1
+            vmin_, vmax_ = -diff_max, diff_max
+            print("diffmin %s diffmax %s" % (vmin_, vmax_))
             plot_2d_array(darray, data_mask, figsize=figsize,
                           vmin=vmin_, vmax=vmax_, **attr)
 

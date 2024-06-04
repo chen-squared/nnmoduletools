@@ -1,4 +1,3 @@
-import struct
 import warnings
 import numpy as np
 try:
@@ -11,82 +10,67 @@ except ImportError:
 # Float Converter #
 ###################
 
+# Regulations:
+# memory: np.uint16 or np.uint32
+# value: all convert to np.float32
 
-def fp32_decode(fp32):
+def fp32_decode(fp32_memory):
+    return np.array(fp32_memory, dtype=np.uint32).view(np.float32)
+
+def fp32_encode(fp32_value):
+    return np.array(fp32_value, dtype=np.float32).view(np.uint32)
+
+def fp16_decode(fp16_memory):
+    return np.array(fp16_memory, dtype=np.uint16).view(np.float16).astype(np.float32)
+
+def fp16_encode(fp16_value):
+    return np.array(fp16_value, dtype=np.float16).view(np.uint16)
+
+def bfp16_decode(bfp16_memory):
     if use_torch:
-        if fp32 >> 31:
-            fp32 -= 0x100000000
-        return torch.tensor(fp32, dtype=torch.int32).view(torch.float32).item()
-    return struct.unpack('!f', struct.pack('!I', fp32))[0]
+        bfp16_memory = np.array(bfp16_memory, dtype=np.uint16).view(np.int16)
+        return torch.tensor(bfp16_memory, dtype=torch.int16).view(torch.bfloat16).to(torch.float32).numpy()
+    else:
+        bfp16_memory = np.array(bfp16_memory, dtype=np.uint32) << 16
+        return np.array(bfp16_memory, dtype=np.uint32).view(np.float32)
 
-
-def fp32_encode(flt):
+def bfp16_encode(bfp16_value):
     if use_torch:
-        memory = torch.tensor(flt, dtype=torch.float32).view(torch.int32).item()
-        if memory < 0:
-            memory += 0x100000000
-        return memory
-    return struct.unpack('!I', struct.pack('!f', flt))[0]
-
-
-def fp16_decode(fp16):
-    if use_torch:
-        if fp16 >> 15:
-            fp16 -= 0x10000
-        return torch.tensor(fp16, dtype=torch.int16).view(torch.float16).item()
-    return struct.unpack('<e', struct.pack('<H', fp16))[0]
-
-
-def fp16_encode(flt):
-    if use_torch:
-        memory = torch.tensor(flt, dtype=torch.float16).view(torch.int16).item()
-        if memory < 0:
-            memory += 0x10000
-        return memory
-    return struct.unpack('<H', np.float16(flt))[0]
-
-
-def bfp16_decode(bfp16):
-    if use_torch:
-        if bfp16 >> 15:
-            bfp16 -= 0x10000
-        return torch.tensor(bfp16, dtype=torch.int16).view(torch.bfloat16).item()
-    return struct.unpack('!f', struct.pack('!I', bfp16 << 16))[0]
-
-
-def bfp16_encode(flt):
-    if use_torch:
-        memory = torch.tensor(flt, dtype=torch.bfloat16).view(torch.int16).item()
-        if memory < 0:
-            memory += 0x10000
-        return memory
-    i = struct.unpack('!I', struct.pack('!f', flt))[0]
-    if (i & 0x1FFFF) == 0x8000:
-        i -= 0x8000
-    i += 0x8000
-    return i >> 16
+        return torch.tensor(bfp16_value, dtype=torch.bfloat16).view(torch.int16).numpy().view(np.uint16)
+    else:
+        bfp16_memory = np.array(bfp16_value, dtype=np.float32).view(np.uint32) 
+        mask = (bfp16_memory & 0x1FFFF) == 0x8000
+        bfp16_memory[mask] -= 0x8000
+        bfp16_memory += 0x8000
+        return (bfp16_memory >> 16).astype(np.uint16)
 
 
 class floating:
     bits = 32
+    memory_dtype = np.uint32
 
     def __init__(self, value=None, memory=None):
         if memory is None:
             assert not value is None
-            self.value = self.decode(self.encode(value))
+            if isinstance(value, floating):
+                self.memory = self.encode(value.value)
+            else:
+                self.memory = self.encode(value)
         else:
             assert value is None
-            assert 0 <= memory < (1 << self.bits)
-            self.value = self.decode(memory)
+            if isinstance(memory, floating):
+                self.memory = self.encode(memory.value)
+            else:
+                assert np.all(0 <= memory < (1 << self.bits))
+                self.memory = np.array(memory, dtype=self.memory_dtype)
 
     def __repr__(self):
-        return f"%s(%s)[0x%0{self.bits // 4}x]" % (self.__class__.__name__, self.value, self.memory)
+        elem_repr = f"%s(0x%0{self.bits // 4}x)"
+        data_repr = ", ".join([elem_repr % (v, m) for v, m in zip(self.value.flatten(), self.memory.flatten())])
+        return f"{self.__class__.__name__}[{data_repr}]"
 
     def __str__(self):
-        return str(float(self))
-
-    def __float__(self):
-        return self.value
+        return str(self.value)
 
     def __int__(self):
         return int(self.value)
@@ -95,34 +79,34 @@ class floating:
         return self.__class__(abs(self.value))
 
     def __eq__(self, other):
-        return self.value == float(other)
+        return self.value == self.__class__(other).value
 
     def __lt__(self, other):
-        return self.value < float(other)
+        return self.value < self.__class__(other).value
 
     def __add__(self, other):
-        return self.__class__(self.value + float(other))
+        return self.__class__(self.value + self.__class__(other).value)
 
     def __radd__(self, other):
-        return self.__class__(float(other) + self.value)
+        return self.__class__(self.__class__(other).value + self.value)
 
     def __sub__(self, other):
-        return self.__class__(self.value - float(other))
+        return self.__class__(self.value - self.__class__(other).value)
 
     def __rsub__(self, other):
-        return self.__class__(float(other) - self.value)
+        return self.__class__(self.__class__(other).value - self.value)
 
     def __mul__(self, other):
-        return self.__class__(self.value * float(other))
+        return self.__class__(self.value * self.__class__(other).value)
 
     def __rmul__(self, other):
-        return self.__class__(float(other) * self.value)
+        return self.__class__(self.__class__(other).value * self.value)
 
     def __truediv__(self, other):
-        return self.__class__(self.value / float(other))
+        return self.__class__(self.value / self.__class__(other).value)
 
     def __rtruediv__(self, other):
-        return self.__class__(float(other) / self.value)
+        return self.__class__(self.__class__(other).value / self.value)
 
     def __pos__(self):
         return self.__class__(self.value)
@@ -139,16 +123,18 @@ class floating:
         return fp32_encode(flt)
 
     @property
-    def memory(self):
-        return self.encode(self.value)
+    def value(self):
+        return self.decode(self.memory)
 
 
 f32 = floating
 fp32 = floating
+float32 = floating
 
 
 class float16(floating):
     bits = 16
+    memory_dtype = np.uint16
 
     def __init__(self, value=None, memory=None):
         super().__init__(value, memory)
@@ -168,6 +154,7 @@ fp16 = float16
 
 class bfloat16(floating):
     bits = 16
+    memory_dtype = np.uint16
 
     def __init__(self, value=None, memory=None):
         super().__init__(value, memory)
@@ -187,11 +174,14 @@ bfp16 = bfloat16
 
 class FloatConverter:
     def __init__(self, value=None, memory=None):
+        warnings.warn(
+            "FloatConverter is deprecated. Use floating class instead.", DeprecationWarning)
         if value is None and not memory is None:
             assert isinstance(memory, (int, np.integer))
         elif not value is None and memory is None:
             assert isinstance(value, (float, np.floating, int, np.integer))
-            warnings.warn(
+            if isinstance(value, (int, np.integer)):
+                warnings.warn(
                     "Warning: You are inputting an integer as value. If it is not intended, specify 'memory=' argument.", Warning)
         else:
             raise ValueError
@@ -207,14 +197,14 @@ class FloatConverter:
             self.fp16_memory = self.memory & 0xffff
 
         if not self.value is None:
-            self.fp32_memory = fp32_encode(self.value)
-            self.bfp16_memory = bfp16_encode(self.value)
-            self.fp16_memory = fp16_encode(self.value)
+            self.fp32_memory = fp32_encode(self.value).item()
+            self.bfp16_memory = bfp16_encode(self.value).item()
+            self.fp16_memory = fp16_encode(self.value).item()
 
     def init_value(self):
-        self.fp32 = fp32_decode(self.fp32_memory)
-        self.bfp16 = bfp16_decode(self.bfp16_memory)
-        self.fp16 = fp16_decode(self.fp16_memory)
+        self.fp32 = fp32_decode(self.fp32_memory).item()
+        self.bfp16 = bfp16_decode(self.bfp16_memory).item()
+        self.fp16 = fp16_decode(self.fp16_memory).item()
 
     def print_results(self):
         print("BF16: %10d     0x%04x" %
