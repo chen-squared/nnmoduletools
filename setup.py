@@ -1,8 +1,8 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='moduletools',
-    version='0.0.1+alpha',
+    name='nnmoduletools',
+    version='0.0.1-alpha',
     description='A collection of neural network utilities',
     author='chensquared',
     author_email='chensquared319@gmail.com',

@@ -1,4 +1,4 @@
-# ModuleTools
+# NNmoduletools
 
 A collection of neural network utilities.
 
@@ -46,7 +46,7 @@ pip install .
     Insert these lines into your code:
     ```Python
     import torch
-    from moduletools.module_debugger import register_hook, save_tensors, save_model_params, save_model_grads, combine_npz
+    from nnmoduletools.module_debugger import register_hook, save_tensors, save_model_params, save_model_grads, combine_npz
 
     class YourModule(torch.nn.Module):
         ...
@@ -73,7 +73,7 @@ pip install .
 
     You can get the latest log directory easily with `LogReader`:
     ```Python
-    from moduletools.module_debugger import LogReader
+    from nnmoduletools.module_debugger import LogReader
     latest = LogReader(devices=["cuda"])
     print(latest.cuda_dir)
     ```
