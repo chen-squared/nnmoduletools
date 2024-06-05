@@ -125,6 +125,12 @@ class floating:
     @property
     def value(self):
         return self.decode(self.memory)
+    
+    def to(self, dtype):
+        if issubclass(dtype, floating):
+            return dtype(self.value)
+        else:
+            raise ValueError
 
 
 f32 = floating

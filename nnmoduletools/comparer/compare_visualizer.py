@@ -359,6 +359,29 @@ class NPZWrapper:
             data_mask = np.block([[data_mask_channel if 0 <= (n % per_c) *
                                    c_columns + c < c_ else np.zeros_like(data_mask_channel) for c in range(frame_shape[1])] for n in range(frame_shape[0])])
 
+            # # trying to accelerate, but seems to be failed. suspended.
+            
+            # # method 1
+            # frame_shape = [n_ * per_c * h_, min(c_, c_columns) * w_]
+            # new_darray = np.zeros(frame_shape)
+            # data_mask = np.zeros(frame_shape)
+            # x, y = np.indices(new_darray.shape)
+            # x_ok, y_ok = np.where((((x // h_) % per_c) * c_columns + y // w_ < c_ ) * ((x % h_) * w_  + (y % w_) < darray.shape[-2] * darray.shape[-1]))
+            # n, c, h, w = (x_ok // (per_c * h_)), ((x_ok // h_) % per_c) * c_columns + y_ok // w_, x_ok % h_, y_ok % w_
+            # data_mask[x_ok, y_ok] = data_mask_channel[h, w]
+            # h, w = (h * w_ + w) // darray.shape[-1], (h * w_ + w) % darray.shape[-1]
+            # new_darray[x_ok, y_ok] = darray[n, c, h, w]
+
+            # # method 2
+            # new_darray = np.zeros((frame_shape[0], frame_shape[1], data_mask_channel.shape[0] * data_mask_channel.shape[1]))
+            # data_mask = np.zeros((frame_shape[0], frame_shape[1]) + data_mask_channel.shape)
+            # n_indices, c_indices = np.indices(frame_shape)
+            # valid_indices = np.where((n_indices % per_c) * c_columns + c_indices < c_)
+            # new_darray[valid_indices[0], valid_indices[1], :darray.shape[-1] * darray.shape[-2]] = darray[valid_indices[0] // per_c, (valid_indices[0] % per_c) * c_columns + valid_indices[1]].reshape(-1, darray.shape[-1] * darray.shape[-2])
+            # data_mask[valid_indices] = data_mask_channel
+            # new_darray = new_darray.reshape(new_darray.shape[0], new_darray.shape[1], data_mask_channel.shape[0], data_mask_channel.shape[1]).transpose((0, 2, 1, 3)).reshape(new_darray.shape[0] * data_mask_channel.shape[0], new_darray.shape[1] * data_mask_channel.shape[1])
+            # data_mask = data_mask.transpose((0, 2, 1, 3)).reshape(data_mask.shape[0] * data_mask.shape[2], data_mask.shape[1] * data_mask.shape[3])
+
         attr = {'title': ' '.join([tensor, str(slices) if not slices is None else "", str(index) if not index is None else ""]).strip(),
                 'h_split': h_,
                 'w_split': w_,

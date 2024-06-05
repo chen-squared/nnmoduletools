@@ -1,3 +1,6 @@
 *__pycache__*
 *.egg-info
 dist/*
+darray_model_out.npz
+darray_tpu_out.npz
+err.npz
