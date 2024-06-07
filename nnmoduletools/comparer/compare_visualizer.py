@@ -8,19 +8,6 @@ import sys
 import subprocess
 from tqdm import tqdm
 
-use_npz_tool = True
-try:
-    process = subprocess.Popen(["which" "npz_tool.py"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    output, error = process.communicate()
-    if process.returncode == 0:
-        sys.path.append(output.decode("uft-8").strip())
-        from numpy_helper.tensor_compare import TensorCompare as tc
-    else:
-        raise ImportError
-except:
-    warnings.warn("Warning: npz_tool not available in your environment. Fall back to integrated compare.", Warning)
-    use_npz_tool = False
-
 from multiprocessing import Pool
 from pathlib import Path
 
@@ -749,86 +736,102 @@ def nchw_to_idx(nchw, attr):
         return (h, w)
     return (n * attr['h_split'] + h, c * attr['w_split'] + w)
 
+def close_order(x, y):
+    y_ = y + (y == 0) * 1e-10
+    order_raw = -np.log10(np.abs(np.max((np.abs(x - y) - 1e-8) / np.abs(y_))))
+    return int(np.clip(order_raw, 0.0, 5.0))
+
+# def square_rooted(x):
+#     return np.sqrt(np.sum(np.power(x, 2)))
+        
+# def cosine_similarity(x, y):
+#     numerator = np.sum(x * y)
+#     sqrt_x = square_rooted(x)
+#     sqrt_y = square_rooted(y)
+#     denominator = sqrt_x * sqrt_y
+#     if denominator == 0.0:
+#         if sqrt_x == 0.0 and sqrt_y == 0.0:
+#             return 1.0
+#         else:
+#             return 0.0
+#     return numerator / denominator
+
+# def euclidean_similarity(x, y):
+#     ed = np.sqrt(np.sum(np.power(x - y, 2)))
+#     sr = square_rooted((x + y) / 2) + 1e-7
+#     if (np.isinf(ed) or np.isinf(sr)):
+#         res = 0.0
+#     else:
+#         res = 1 - ed / sr
+#     return res
+
+# def sqnr_similarity(signal_raw, signal_dequant):
+#     raw = signal_raw.ravel()
+#     dequant = signal_dequant.ravel()
+
+#     noise = raw - dequant
+
+#     avg_raw = np.sum(raw) / raw.size
+#     avg_noise = np.sum(noise) / noise.size
+
+#     var_raw_zero_mean = np.sum(np.square(raw - avg_raw))
+#     var_noise_zero_mean = np.sum(np.square(noise - avg_noise))
+#     if var_noise_zero_mean == 0 or var_raw_zero_mean == 0:
+#         return float('inf')
+#     sqnr = 10 * np.log10(var_raw_zero_mean / var_noise_zero_mean)
+
+#     return sqnr
+
+def calc_similarity_opt(x, y):
+    x_sum, y_sum = np.sum(x), np.sum(y)
+    if np.isinf(x_sum) or np.isinf(y_sum):
+        x, y = x.astype(np.float64), y.astype(np.float64)
+        x_sum, y_sum = np.sum(x), np.sum(y)
+    scale = np.max(np.abs([x_sum, y_sum])) / x.size
+    if scale ** 2 * x.size > 3.4e38:
+        x, y, x_sum, y_sum = x / scale, y / scale, x_sum / scale, y_sum / scale
+    x_2, y_2 = np.linalg.norm(x) ** 2, np.linalg.norm(y) ** 2
+    xy = np.dot(x, y)
+    # cosine similarity
+    cos_sim = 0.0
+    denominator = np.sqrt(x_2 * y_2)
+    if denominator == 0.0:
+        if x_2 == 0.0 and y_2 == 0.0:
+            cos_sim = 1.0
+        else:
+            cos_sim = 0.0
+    cos_sim = xy / denominator
+    # euclid similarity
+    _2xy = 2 * xy
+    ed = np.sqrt(np.abs(x_2 + y_2 - _2xy))
+    sr = np.sqrt(x_2 + y_2 + _2xy) / 2 + 1e-7
+    euc_sim = 0.0 if np.isinf(ed) or np.isinf(sr) else (1 - ed / sr)
+    # sqnr similarity
+    var_raw_zero_mean = max(x_2 - np.square(x_sum) / x.size, 0.0)
+    var_noise_zero_mean = max((x_2 + y_2 - _2xy) - np.square(x_sum - y_sum) / x.size, 0.0)
+    sqnr_sim = float('inf') if var_noise_zero_mean == 0 or var_raw_zero_mean == 0 else (10 * np.log10(var_raw_zero_mean / var_noise_zero_mean))
+    return cos_sim, euc_sim, sqnr_sim
+
 def calc_similarity(target, ref, mask=None):
     if mask is None:
-        mask = np.ones_like(target)
-    target_flatten = target[mask == 1].flatten().astype(float)
-    ref_flatten = ref[mask == 1].flatten().astype(float)
-    # compare similarity as npz_tool does
-    if use_npz_tool:
-        mlir_comparer = tc(euclidean_similarity_tol=float('-inf'))
-        _1, level, _2, sim, _3 = mlir_comparer.compare(target_flatten, ref_flatten, False, False)
-        if level == tc.EQUAL:
-            return {"equal": "all equal"}
-        if level == tc.CLOSE:
-            return {"close_order": sim["close_order"]}
-        if level == tc.SIMILAR or level == tc.NOT_SIMILAR:
-            return {"similarity": (sim["cosine"], sim["euclid"], sim["sqnr"])}
-        raise ValueError("Invalid level %s" % level)
+        target_flatten = target.flatten().astype(float)
+        ref_flatten = ref.flatten().astype(float)
     else:
-        def square_rooted(x):
-            return np.sqrt(np.sum(np.power(x, 2)))
+        target_flatten = target[mask == 1].flatten().astype(float)
+        ref_flatten = ref[mask == 1].flatten().astype(float)
+    # compare similarity as npz_tool does
+    if np.all(target_flatten == ref_flatten):
+        return {"equal": "all equal"}
 
-        def cosine_similarity(x, y):
-            numerator = np.sum(x * y)
-            sqrt_x = square_rooted(x)
-            sqrt_y = square_rooted(y)
-            denominator = sqrt_x * sqrt_y
-            if denominator == 0.0:
-                if sqrt_x == 0.0 and sqrt_y == 0.0:
-                    return 1.0
-                else:
-                    return 0.0
-            return numerator / denominator
+    close = close_order(target_flatten, ref_flatten)
+    if close >= 3:
+        return {"close_order": close}
 
-        def euclidean_similarity(x, y):
-            ed = np.sqrt(np.sum(np.power(x - y, 2)))
-            sr = square_rooted((x + y) / 2) + 1e-7
-            if (np.isinf(ed) or np.isinf(sr)):
-                res = 0.0
-            else:
-                res = 1 - ed / sr
-            return res
-
-        def sqnr_similarity(signal_raw, signal_dequant):
-            raw = signal_raw.ravel()
-            dequant = signal_dequant.ravel()
-
-            noise = raw - dequant
-
-            avg_raw = np.sum(raw) / raw.size
-            avg_noise = np.sum(noise) / noise.size
-
-            var_raw_zero_mean = np.sum(np.square(raw - avg_raw))
-            var_noise_zero_mean = np.sum(np.square(noise - avg_noise))
-            if var_noise_zero_mean == 0 or var_raw_zero_mean == 0:
-                return float('inf')
-            sqnr = 10 * np.log10(var_raw_zero_mean / var_noise_zero_mean)
-
-            return sqnr
-
-        def close_order(x, y):
-            for order in range(5, 1, -1):
-                if (np.allclose(x, y, rtol=1 * 10**(-order), atol=1e-8,
-                                equal_nan=True)):
-                    return order
-            return 0
-
-        if np.all(target_flatten == ref_flatten):
-            return {"equal": "all equal"}
-
-        close = close_order(target_flatten, ref_flatten)
-        if close >= 3:
-            return {"close_order": close}
-
-        target_flatten[np.isnan(target_flatten)] = 0.0
-        ref_flatten[np.isnan(ref_flatten)] = 0.0
-        target_flatten[np.isposinf(target_flatten)] = 10000.0
-        target_flatten[np.isneginf(target_flatten)] = -10000.0
-        ref_flatten[np.isposinf(ref_flatten)] = 10000.0
-        ref_flatten[np.isneginf(ref_flatten)] = -10000.0
-
-        cos_sim = cosine_similarity(target_flatten, ref_flatten)
-        euc_sim = euclidean_similarity(target_flatten, ref_flatten)
-        sqnr_sim = sqnr_similarity(target_flatten, ref_flatten)
-        return {"similarity": (cos_sim, euc_sim, sqnr_sim)}
+    target_flatten[np.isnan(target_flatten)] = 0.0
+    ref_flatten[np.isnan(ref_flatten)] = 0.0
+    target_flatten[np.isposinf(target_flatten)] = 10000.0
+    target_flatten[np.isneginf(target_flatten)] = -10000.0
+    ref_flatten[np.isposinf(ref_flatten)] = 10000.0
+    ref_flatten[np.isneginf(ref_flatten)] = -10000.0
+    
+    return {"similarity": calc_similarity_opt(target_flatten, ref_flatten)}
