@@ -2,8 +2,10 @@ from setuptools import setup, find_packages
 
 setup(
     name='nnmoduletools',
-    version='0.0.3-alpha',
+    version='0.0.4-alpha',
     description='A collection of neural network utilities',
+    long_description=open('README.md').read(),
+    long_description_content_type='text/markdown',
     author='chensquared',
     author_email='chensquared319@gmail.com',
     packages=find_packages(),

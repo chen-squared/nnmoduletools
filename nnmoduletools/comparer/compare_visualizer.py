@@ -408,13 +408,12 @@ class NPZWrapper:
             if rel_tol_ == 0.:
                 rel_tol_ += 1E-10
             if vmin is None or vmax is None:
-                vmin = -1  # (real_min - abs_tol) / rel_tol
-                vmax = 1  # (real_max - abs_tol) / rel_tol
-            # print("zero point %s, scale %s." % (abs_tol_, rel_tol_))
+                vmin = abs_tol_ - rel_tol_ 
+                vmax = abs_tol_ + rel_tol_  
             print(f"vmin {abs_tol_ - rel_tol_} zero point {abs_tol_} vmax {abs_tol_ + rel_tol_} ")
 
             attr['title'] = "%s: %s" % (self.role, attr['title'])
-            plot_2d_array((darray - abs_tol_) / rel_tol_, data_mask, figsize=figsize,
+            plot_2d_array(darray, data_mask, figsize=figsize,
                           vmin=vmin, vmax=vmax, **attr)
 
 
@@ -560,7 +559,7 @@ class NPZComparer:
         diff = target - ref
         diff *= mask
         if rel_tol != 0:
-            diff /= np.abs(ref + 1E-10)
+            diff /= np.abs(ref) + abs_tol / rel_tol
         attr1['title'] = 'Diff: %s' % attr1['title']
 
         return diff, data_mask1, attr1, compare
@@ -640,15 +639,11 @@ class NPZComparer:
             scale = max(abs(all_max - zp), abs(all_min - zp))
             if scale == 0:
                 scale += 1E-10
-            all_vmin = -1  # (all_min - zp) / scale
-            all_vmax = 1  # (all_max - zp) / scale
 
-            self.target.plot(key, abs_tol=zp, rel_tol=scale,
-                             figsize=figsize, vmin=all_vmin, vmax=all_vmax, **kwargs)
-            self.ref.plot(key, abs_tol=zp, rel_tol=scale,
-                          figsize=figsize, vmin=all_vmin, vmax=all_vmax, **kwargs)
-            self.plot_diff(key, abs_tol=abs_tol, rel_tol=rel_tol,
-                           figsize=figsize, vmin=diffmin, vmax=diffmax, **kwargs)
+            self.target.plot(key, abs_tol=zp, rel_tol=scale, figsize=figsize, **kwargs)
+            self.ref.plot(key, abs_tol=zp, rel_tol=scale, figsize=figsize, **kwargs)
+            self.plot_diff(key, abs_tol=abs_tol, rel_tol=rel_tol, figsize=figsize,
+                           vmin=diffmin, vmax=diffmax, **kwargs)
         if dump:
             self.dump_vs_plot(verbose=verbose)
 
@@ -697,7 +692,9 @@ class NPZComparer:
             print("tolerance: abs %s, rel %s" % (abs_tol, rel_tol))
 
             diff = target_darray - ref_darray
-            rel_diff = diff / np.abs(ref_darray + 1e-10)
+            abs_ref = np.abs(ref_darray)
+            rel_diff = diff / abs_ref
+            error_magnitude = np.abs(diff) / (rel_tol * abs_ref + abs_tol)
             print("%20s %15s %15s %15s %15s" % ("index", "target", "ref", "diff", "rel_diff"))
 
             N, C, H, W = idx_to_nchw(np.array(target_darray.shape) - 1, attr1)
@@ -708,17 +705,15 @@ class NPZComparer:
                             h_, w_ = nchw_to_idx((n, c, h, w), attr1)
                             if not data_mask1[h_][w_]:
                                 continue
-                            error_mark_abs = int(min(100, abs(diff[h_][w_]) / (abs_tol + 1e-10)))
-                            error_mark_rel = int(min(100, abs(rel_diff[h_][w_]) / (rel_tol + 1e-10)))
-                            error_mark = min(error_mark_abs, error_mark_rel)
-                            if verbose or error_mark >= 1:
+                            error_mark = 100 if np.isnan(error_magnitude[h_][w_]) else min(error_magnitude[h_][w_], 100)
+                            if verbose or error_mark > 1:
                                 color = 'none' if diff[h_][w_] == 0 else ('blue' if diff[h_][w_] < 0 else 'red')
                                 print("%20s %#15.8g %#15.8g %s %s %s" % ((h, w) if attr1["h_split"] is None else (n, c, h, w),
                                                                          target_darray[h_][w_],
                                                                          ref_darray[h_][w_],
                                                                          color_str("%#15.8g" % diff[h_][w_], 'green' if abs(diff[h_][w_]) <= abs_tol else color),
                                                                          color_str("%#15.8g" % rel_diff[h_][w_], 'green' if abs(rel_diff[h_][w_]) <= rel_tol else color),
-                                                                         color_str("!" * error_mark, color)))
+                                                                         color_str("!" * int(error_mark), color)))
             print("")
 
 def idx_to_nchw(idx, attr):
@@ -738,7 +733,7 @@ def nchw_to_idx(nchw, attr):
 
 def close_order(x, y):
     y_ = y + (y == 0) * 1e-10
-    order_raw = -np.log10(np.abs(np.max((np.abs(x - y) - 1e-8) / np.abs(y_))))
+    order_raw = -np.log10(np.abs(np.nanmax((np.abs(x - y) - 1e-8) / np.abs(y_))))
     return int(np.clip(order_raw, 0.0, 5.0))
 
 # def square_rooted(x):
