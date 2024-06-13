@@ -29,6 +29,14 @@ python -m pip install nnmoduletools
 
     See [tutorial.ipynb](tutorial.ipynb)
 
+    Now you can also use command line to compare two npz files:
+
+    ```shell
+    python -m nnmoduletools.comparer target.npz ref.npz --tolerance 0.99,0.99 --verbose
+    ```
+
+    See `python -m nnmoduletools.comparer --help` for more information.
+
 2. float utils
 
     See [tutorial.ipynb](tutorial.ipynb)

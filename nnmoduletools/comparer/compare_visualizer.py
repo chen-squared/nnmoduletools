@@ -331,6 +331,7 @@ class NPZWrapper:
             print("shown in %s" % (tuple(reshaped), ))
 
         n_, c_, h_, w_ = reshaped
+        if c_columns == -1: c_columns = c_
         per_c = math.ceil(c_ / c_columns)
 
         if not index is None:
@@ -487,7 +488,7 @@ class NPZComparer:
         for key in tensors:
             print("tensor='%s'," % key, "#shape", self.ref[key].shape)
 
-    def compare(self, tolerance=(-1., -1.), tensor=None, verbose=True, summary=False):
+    def compare(self, tolerance=(-1., -1.), tensor=None, verbose=1, summary=False):
         if tensor is None:
             tensors = self.keys
             if verbose:
@@ -530,7 +531,8 @@ class NPZComparer:
                     ALL_PASS = 0
             if verbose and not summary:
                 print(color_str(f"tensor='{key}', #{self.ref[key].shape} {''.join(('%s: (%.6f, %.6f, %.6f)' % (k, *v) if isinstance(v, tuple) else '%s: %s' % (k, v)) for k, v in result.items())}{(' √' if PASS else ' ×') if tolerance != (-1., -1) else '' }", 'none' if tolerance == (-1., -1) else ('green' if PASS else 'red')))
-
+                if verbose > 1 and not PASS:
+                    self.dump_vs(tensor=key, c_columns=-1, top_k=10)
         if verbose:
             print(color_str(f"min_similarity: {tuple(min_similarity)}{(' √' if ALL_PASS else ' ×') if tolerance != (-1., -1.) else ''}", 'none' if tolerance == (-1., -1.) else ('green' if ALL_PASS else 'red')))
         return bool(ALL_PASS)
@@ -588,7 +590,7 @@ class NPZComparer:
             print(*(f"{k}: {v}" for k, v in compare.items()))
             diff_max = max(abs(real_min if vmin is None else vmin), abs(real_max if vmax is None else vmax))
             if diff_max == 0:
-                diff_max += 1
+                diff_max += 0.1
             vmin_, vmax_ = -diff_max, diff_max
             print("diffmin %s diffmax %s" % (vmin_, vmax_))
             plot_2d_array(darray, data_mask, figsize=figsize,
@@ -666,7 +668,7 @@ class NPZComparer:
 
     def dump_vs(self, tensor=None, abs_tol=1e-8, rel_tol=1e-3,
                 slices=None, index=None, c_columns=32, resize_hw=None, transpose_hw=False, mix_axis=None,
-                verbose=False, **kwargs):
+                verbose=False, top_k=None, **kwargs):
         kwargs_plot = {'slices': slices, 'index': index, 'c_columns': c_columns, 'resize_hw': resize_hw, 'transpose_hw': transpose_hw, 'mix_axis': mix_axis}
         tensors = []
         if tensor is None:
@@ -690,30 +692,49 @@ class NPZComparer:
 
             print(f"{''.join(('%s: (%.6f, %.6f, %.6f)' % (k, *v) if isinstance(v, tuple) else '%s: %s' % (k, v)) for k, v in calc_similarity(target_darray, ref_darray, data_mask1).items())}", end=", ")
             print("tolerance: abs %s, rel %s" % (abs_tol, rel_tol))
-
+            if not top_k is None:
+                print("top %s errors:" % top_k)
             diff = target_darray - ref_darray
             abs_ref = np.abs(ref_darray)
-            rel_diff = diff / abs_ref
-            error_magnitude = np.abs(diff) / (rel_tol * abs_ref + abs_tol)
-            print("%20s %15s %15s %15s %15s" % ("index", "target", "ref", "diff", "rel_diff"))
-
-            N, C, H, W = idx_to_nchw(np.array(target_darray.shape) - 1, attr1)
-            for n in range(N+1):
-                for c in range(C+1):
-                    for h in range(H+1):
-                        for w in range(W+1):
-                            h_, w_ = nchw_to_idx((n, c, h, w), attr1)
-                            if not data_mask1[h_][w_]:
-                                continue
-                            error_mark = 100 if np.isnan(error_magnitude[h_][w_]) else min(error_magnitude[h_][w_], 100)
-                            if verbose or error_mark > 1:
-                                color = 'none' if diff[h_][w_] == 0 else ('blue' if diff[h_][w_] < 0 else 'red')
-                                print("%20s %#15.8g %#15.8g %s %s %s" % ((h, w) if attr1["h_split"] is None else (n, c, h, w),
-                                                                         target_darray[h_][w_],
-                                                                         ref_darray[h_][w_],
-                                                                         color_str("%#15.8g" % diff[h_][w_], 'green' if abs(diff[h_][w_]) <= abs_tol else color),
-                                                                         color_str("%#15.8g" % rel_diff[h_][w_], 'green' if abs(rel_diff[h_][w_]) <= rel_tol else color),
-                                                                         color_str("!" * int(error_mark), color)))
+            zero_mask = (diff == 0) * (abs_ref == 0) if rel_tol == 0 else abs_tol / rel_tol
+            rel_diff = diff / (abs_ref + zero_mask)
+            error_magnitude = np.abs(diff) / abs_tol if rel_tol == 0 else np.abs(rel_diff) / rel_tol
+            
+            print("%20s %15s %15s %15s %15s" % ("index", "target", "ref", "abs_diff", "rel_diff"))
+            
+            if not top_k is None:
+                top_k = min(top_k, np.sum(data_mask1))
+                sorted_idx_x, sorted_idx_y = np.unravel_index(np.argsort(error_magnitude, axis=None), error_magnitude.shape)
+                top_error_idx = zip(sorted_idx_x[:-top_k-1:-1], sorted_idx_y[:-top_k-1:-1])
+                for h_, w_  in top_error_idx:
+                    n, c, h, w = idx_to_nchw((h_, w_), attr1)
+                    error_mark = 100 if np.isnan(error_magnitude[h_][w_]) else min(error_magnitude[h_][w_], 100)
+                    if error_mark > 1:
+                        color = 'none' if diff[h_][w_] == 0 else ('blue' if diff[h_][w_] < 0 else 'red')
+                        print("%20s %#15.8g %#15.8g %s %s %s" % ((h, w) if attr1["h_split"] is None else (n, c, h, w),
+                                                                    target_darray[h_][w_],
+                                                                    ref_darray[h_][w_],
+                                                                    color_str("%#15.8g" % diff[h_][w_], 'green' if abs(diff[h_][w_]) <= abs_tol else color),
+                                                                    color_str("%#15.8g" % rel_diff[h_][w_], 'green' if abs(rel_diff[h_][w_]) <= rel_tol else color),
+                                                                    color_str("!" * int(error_mark), color)))
+            else:
+                N, C, H, W = idx_to_nchw(np.array(target_darray.shape) - 1, attr1)
+                for n in range(N+1):
+                    for c in range(C+1):
+                        for h in range(H+1):
+                            for w in range(W+1):
+                                h_, w_ = nchw_to_idx((n, c, h, w), attr1)
+                                if not data_mask1[h_][w_]:
+                                    continue
+                                error_mark = 100 if np.isnan(error_magnitude[h_][w_]) else min(error_magnitude[h_][w_], 100)
+                                if verbose or error_mark > 1:
+                                    color = 'none' if diff[h_][w_] == 0 else ('blue' if diff[h_][w_] < 0 else 'red')
+                                    print("%20s %#15.8g %#15.8g %s %s %s" % ((h, w) if attr1["h_split"] is None else (n, c, h, w),
+                                                                            target_darray[h_][w_],
+                                                                            ref_darray[h_][w_],
+                                                                            color_str("%#15.8g" % diff[h_][w_], 'green' if abs(diff[h_][w_]) <= abs_tol else color),
+                                                                            color_str("%#15.8g" % rel_diff[h_][w_], 'green' if abs(rel_diff[h_][w_]) <= rel_tol else color),
+                                                                            color_str("!" * int(error_mark), color)))
             print("")
 
 def idx_to_nchw(idx, attr):
@@ -795,7 +816,8 @@ def calc_similarity_opt(x, y):
             cos_sim = 1.0
         else:
             cos_sim = 0.0
-    cos_sim = xy / denominator
+    else:
+        cos_sim = xy / denominator
     # euclid similarity
     _2xy = 2 * xy
     ed = np.sqrt(np.abs(x_2 + y_2 - _2xy))

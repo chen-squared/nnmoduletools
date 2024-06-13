@@ -145,11 +145,11 @@ def tensor_cpu_to_tpu(tensor, device, dtype, *args):
         raise ValueError("device is not TPU")
 
 @apply_recursively()
-def tensor_fp16_to_fp32(tensor, device, dtype=torch.float32, *args):
+def tensor_fp16_to_fp32(tensor, device=None, dtype=torch.float32, *args):
     return tensor.float() if isinstance(tensor, torch.Tensor) and tensor.dtype == torch.half and dtype == torch.float else tensor
 
 @apply_recursively()
-def tensor_fp32_to_fp16(tensor, device, dtype=torch.half, *args):
+def tensor_fp32_to_fp16(tensor, device=None, dtype=torch.half, *args):
     return tensor.half() if isinstance(tensor, torch.Tensor) and tensor.dtype == torch.float and dtype == torch.half else tensor
 
 @apply_recursively()
