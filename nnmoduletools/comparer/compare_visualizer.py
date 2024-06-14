@@ -561,7 +561,8 @@ class NPZComparer:
         diff = target - ref
         diff *= mask
         if rel_tol != 0:
-            diff /= np.abs(ref) + abs_tol / rel_tol
+            abs_ref = np.abs(ref)
+            diff /= abs_ref + ((diff == 0) * (abs_ref == 0) if abs_tol == 0 else abs_tol / rel_tol)
         attr1['title'] = 'Diff: %s' % attr1['title']
 
         return diff, data_mask1, attr1, compare
@@ -696,45 +697,31 @@ class NPZComparer:
                 print("top %s errors:" % top_k)
             diff = target_darray - ref_darray
             abs_ref = np.abs(ref_darray)
-            zero_mask = (diff == 0) * (abs_ref == 0) if rel_tol == 0 else abs_tol / rel_tol
+            zero_mask = ((diff == 0) * (abs_ref == 0)) if rel_tol == 0 or abs_tol == 0 else abs_tol / rel_tol
             rel_diff = diff / (abs_ref + zero_mask)
-            error_magnitude = np.abs(diff) / abs_tol if rel_tol == 0 else np.abs(rel_diff) / rel_tol
+            error_magnitude = ((np.abs(diff) > 0) * 100 if abs_tol == 0 else np.abs(diff) / abs_tol) if rel_tol == 0 else np.abs(rel_diff) / rel_tol
             
             print("%20s %15s %15s %15s %15s" % ("index", "target", "ref", "abs_diff", "rel_diff"))
             
             if not top_k is None:
                 top_k = min(top_k, np.sum(data_mask1))
                 sorted_idx_x, sorted_idx_y = np.unravel_index(np.argsort(error_magnitude, axis=None), error_magnitude.shape)
-                top_error_idx = zip(sorted_idx_x[:-top_k-1:-1], sorted_idx_y[:-top_k-1:-1])
-                for h_, w_  in top_error_idx:
-                    n, c, h, w = idx_to_nchw((h_, w_), attr1)
-                    error_mark = 100 if np.isnan(error_magnitude[h_][w_]) else min(error_magnitude[h_][w_], 100)
-                    if error_mark > 1:
-                        color = 'none' if diff[h_][w_] == 0 else ('blue' if diff[h_][w_] < 0 else 'red')
-                        print("%20s %#15.8g %#15.8g %s %s %s" % ((h, w) if attr1["h_split"] is None else (n, c, h, w),
-                                                                    target_darray[h_][w_],
-                                                                    ref_darray[h_][w_],
-                                                                    color_str("%#15.8g" % diff[h_][w_], 'green' if abs(diff[h_][w_]) <= abs_tol else color),
-                                                                    color_str("%#15.8g" % rel_diff[h_][w_], 'green' if abs(rel_diff[h_][w_]) <= rel_tol else color),
-                                                                    color_str("!" * int(error_mark), color)))
+                error_idx_hw = zip(sorted_idx_x[:-top_k-1:-1], sorted_idx_y[:-top_k-1:-1])
+                error_idx_nchw_hw = [(idx_to_nchw(idx, attr1), idx) for idx in error_idx_hw]
             else:
-                N, C, H, W = idx_to_nchw(np.array(target_darray.shape) - 1, attr1)
-                for n in range(N+1):
-                    for c in range(C+1):
-                        for h in range(H+1):
-                            for w in range(W+1):
-                                h_, w_ = nchw_to_idx((n, c, h, w), attr1)
-                                if not data_mask1[h_][w_]:
-                                    continue
-                                error_mark = 100 if np.isnan(error_magnitude[h_][w_]) else min(error_magnitude[h_][w_], 100)
-                                if verbose or error_mark > 1:
-                                    color = 'none' if diff[h_][w_] == 0 else ('blue' if diff[h_][w_] < 0 else 'red')
-                                    print("%20s %#15.8g %#15.8g %s %s %s" % ((h, w) if attr1["h_split"] is None else (n, c, h, w),
-                                                                            target_darray[h_][w_],
-                                                                            ref_darray[h_][w_],
-                                                                            color_str("%#15.8g" % diff[h_][w_], 'green' if abs(diff[h_][w_]) <= abs_tol else color),
-                                                                            color_str("%#15.8g" % rel_diff[h_][w_], 'green' if abs(rel_diff[h_][w_]) <= rel_tol else color),
-                                                                            color_str("!" * int(error_mark), color)))
+                error_idx_hw = np.indices(error_magnitude.shape).reshape(2, -1).T
+                error_idx_nchw_hw = sorted([(idx_to_nchw(idx, attr1), idx) for idx in error_idx_hw], key=lambda x: x[0])
+                
+            for (n, c, h, w), (h_, w_) in error_idx_nchw_hw:
+                error_mark = 100 if np.isnan(error_magnitude[h_][w_]) else min(error_magnitude[h_][w_], 100)
+                color = 'none' if diff[h_][w_] == 0 else ('blue' if diff[h_][w_] < 0 else 'red')
+                if verbose or error_mark > 1:
+                    print("%20s %#15.8g %#15.8g %s %s %s" % ((h, w) if attr1["h_split"] is None else (n, c, h, w),
+                                                             target_darray[h_][w_],
+                                                             ref_darray[h_][w_],
+                                                             color_str("%#15.8g" % diff[h_][w_], 'green' if abs(diff[h_][w_]) <= abs_tol else color),
+                                                             color_str("%#15.8g" % rel_diff[h_][w_], 'green' if abs(rel_diff[h_][w_]) <= rel_tol else color),
+                                                             color_str("!" * int(error_mark), color)))
             print("")
 
 def idx_to_nchw(idx, attr):
@@ -754,7 +741,10 @@ def nchw_to_idx(nchw, attr):
 
 def close_order(x, y):
     y_ = y + (y == 0) * 1e-10
-    order_raw = -np.log10(np.abs(np.nanmax((np.abs(x - y) - 1e-8) / np.abs(y_))))
+    rel_diff = np.nanmax((np.abs(x - y) - 1e-8) / np.abs(y_))
+    if np.isnan(rel_diff):
+        return 0
+    order_raw = -np.log10(np.abs(rel_diff))
     return int(np.clip(order_raw, 0.0, 5.0))
 
 # def square_rooted(x):
