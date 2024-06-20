@@ -1,11 +1,11 @@
 
+import torch
 import numpy as np
 
 import matplotlib.pyplot as plt
 import math
 import warnings
-import sys
-import subprocess
+
 from tqdm import tqdm
 
 from multiprocessing import Pool
@@ -179,9 +179,18 @@ def assign_new_shape(reshaped, resize_hw):
 def get_data_dist(darray, data_mask):
     to_calculate = darray[data_mask == 1]
     to_calculate = to_calculate[~np.isinf(to_calculate)]
-    real_mean = np.nanmean(to_calculate)
-    real_min = np.nanmin(to_calculate)
-    real_max = np.nanmax(to_calculate)
+    try:
+        real_mean = np.nanmean(to_calculate)
+        real_min = np.nanmin(to_calculate)
+        real_max = np.nanmax(to_calculate)
+    except ValueError:
+        real_mean = 0.
+        real_min = 0.
+        real_max = 0.
+    
+    real_mean = 0. if np.isnan(real_mean) else real_mean
+    real_min = 0. if np.isnan(real_min) else real_min
+    real_max = 0. if np.isnan(real_max) else real_max
     return real_mean, real_min, real_max
 
 
@@ -192,9 +201,9 @@ def plot_2d_array(diff, data_mask=None, title="", figsize=6, vmin=-0.1, vmax=0.1
     nan_mask = np.where(np.isnan(diff).astype(float) * data_mask, 1, np.nan)
     pos_inf_mask = np.where(np.isposinf(diff).astype(float) * data_mask, 1, np.nan)
     neg_inf_mask = np.where(np.isneginf(diff).astype(float) * data_mask, 1, np.nan)
-    plt.imshow(nan_mask, 'Greens', vmin=0, vmax=1.25)
-    plt.imshow(pos_inf_mask, 'Oranges', vmin=0, vmax=1.25)
-    plt.imshow(neg_inf_mask, 'Greys', vmin=0, vmax=1.25)
+    plt.imshow(nan_mask, 'Greys', vmin=0, vmax=1.25)
+    plt.imshow(pos_inf_mask, 'Oranges', vmin=0, vmax=2)
+    plt.imshow(neg_inf_mask, 'Greens', vmin=0, vmax=1.5)
     if not data_mask is None:
         # diff += np.where(data_mask == 0, np.nan, 0)
         diff[data_mask == 0] += np.nan
@@ -261,6 +270,8 @@ class NPZWrapper:
             self.npz = npz
         elif isinstance(npz, np.ndarray):
             self.npz = {'darray': npz}
+        elif isinstance(npz, torch.Tensor):
+            self.npz = {'darray': npz.detach().cpu().numpy()}
         else:
             raise TypeError
         self.role = role
@@ -433,7 +444,7 @@ class NPZComparer:
         if self._keys is None and self._error_keys is None:
             self._keys = {}
             self._error_keys = {}
-            for key in self.ref:
+            for key in tqdm(self.ref, desc="Loading NPZ"):
                 if key in self.target:
                     if self.target[key].size != self.ref[key].size:
                         print(f"Error: Tensor {key} shape not same: {self.target[key].shape} vs {self.ref[key].shape}.")
@@ -458,7 +469,6 @@ class NPZComparer:
                 "target": {key for key in self.target if key not in self.keys},
                 "ref": {key for key in self.ref if key not in self.keys}
             }
-            assert len(self._isolated_keys) > 0, 'No isolated data.'
         assert isinstance(self._isolated_keys, dict), "Isolated keys not initialized!"
         return self._isolated_keys
     
@@ -504,21 +514,17 @@ class NPZComparer:
         min_similarity = np.array([1.0, 1.0, np.inf])
         ALL_PASS = 1
 
-        results, finished = {}, {}
+        results = {}
         total = len(tensors)
         with Pool() as pool:
-            for key in tensors:
-                results[key] = pool.apply_async(calc_similarity, args=(self.target[key].reshape(self.ref[key].shape), self.ref[key]))
-            with tqdm(total=total) as pbar:
-                while len(finished) < total:
-                    for key in tensors:
-                        if not key in finished:
-                            res = results[key].ready()
-                            if res:
-                                finished[key] = True
-                                pbar.update(1)
-            pool.close()
-            pool.join()
+            with tqdm(total=total, desc="Comparing") as pbar:
+                for key in tensors:
+                    results[key] = pool.apply_async(calc_similarity,
+                                                    args=(self.target[key].reshape(self.ref[key].shape), self.ref[key]),
+                                                    callback=lambda x: pbar.update(1))
+                pool.close()
+                pool.join()
+                pbar.close()
 
         for key in tensors:
             result = results[key].get()
@@ -656,7 +662,7 @@ class NPZComparer:
     def plot_target(self, *args, **kwargs):
         self.target.plot(*args, **kwargs)
 
-    def dump_vs_plot(self, abs_tol=None, rel_tol=None, verbose=None, **kwargs):
+    def dump_vs_plot(self, abs_tol=None, rel_tol=None, verbose=None, top_k=None, **kwargs):
         archived_kwargs = self.archived_kwargs.copy()
         archived_kwargs.update(kwargs)
         if not abs_tol is None:
@@ -665,10 +671,12 @@ class NPZComparer:
             archived_kwargs['rel_tol'] = rel_tol
         if not verbose is None:
             archived_kwargs['verbose'] = verbose
+        if not top_k is None:
+            archived_kwargs['top_k'] = top_k
         self.dump_vs(**archived_kwargs)
 
     def dump_vs(self, tensor=None, abs_tol=1e-8, rel_tol=1e-3,
-                slices=None, index=None, c_columns=32, resize_hw=None, transpose_hw=False, mix_axis=None,
+                slices=None, index=None, c_columns=-1, resize_hw=None, transpose_hw=False, mix_axis=None,
                 verbose=False, top_k=None, **kwargs):
         kwargs_plot = {'slices': slices, 'index': index, 'c_columns': c_columns, 'resize_hw': resize_hw, 'transpose_hw': transpose_hw, 'mix_axis': mix_axis}
         tensors = []
