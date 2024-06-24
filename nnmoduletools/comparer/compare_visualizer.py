@@ -11,6 +11,8 @@ from tqdm import tqdm
 from multiprocessing import Pool
 from pathlib import Path
 
+from functools import lru_cache
+
 ###########################
 # Colored Print Functions #
 ###########################
@@ -314,6 +316,18 @@ class NPZWrapper:
             print("tensor='%s'," % key, "#shape", self[key].shape)
 
     def get_darray(self, tensor=None, slices=None, index=None, c_columns=32, resize_hw=None, transpose_hw=False, mix_axis=None, print_shape=True):
+        new_darray, data_mask, attr, print_shape_str = self._get_darray(tensor, slices, index, c_columns, resize_hw, transpose_hw, mix_axis)
+        if print_shape:
+            print(print_shape_str)
+        return new_darray, data_mask, attr
+    
+    @lru_cache(maxsize=10)
+    def get_data_dist(self, tensor=None, slices=None, index=None, c_columns=32, resize_hw=None, transpose_hw=False, mix_axis=None):
+        new_darray, data_mask, attr, print_shape_str = self._get_darray(tensor, slices, index, c_columns, resize_hw, transpose_hw, mix_axis)
+        return get_data_dist(new_darray, data_mask)
+    
+    @lru_cache(maxsize=10)
+    def _get_darray(self, tensor=None, slices=None, index=None, c_columns=32, resize_hw=None, transpose_hw=False, mix_axis=None):
         if tensor is None:
             tensor = list(self.keys())[0]
         slice_list = tuple(make_slice_object(e)
@@ -323,11 +337,10 @@ class NPZWrapper:
         else:
             darray = self[tensor][slice_list].astype(float)
         reshaped = get_nchw(darray, mix_axis)
-        if print_shape:
-            if not slices is None:
-                print("sliced", end=" ")
-            print("shape %s, reshaped to %s" %
-                  (darray.shape, tuple(reshaped)), end=", ")
+        print_shape_str = ""
+        if not slices is None:
+            print_shape_str +="sliced "
+        print_shape_str +="shape %s, reshaped to %s, " % (darray.shape, tuple(reshaped))
         darray = np.reshape(darray, reshaped)
         data_mask_channel = assign_new_shape(reshaped, resize_hw)
         if transpose_hw:
@@ -336,10 +349,8 @@ class NPZWrapper:
                 reshaped[2], reshaped[3] = reshaped[3], reshaped[2]
                 data_mask_channel = np.reshape(
                     data_mask_channel.reshape(-1), data_mask_channel.shape[::-1])
-            if print_shape:
-                print("with hw transposed data", end=" ")
-        if print_shape:
-            print("shown in %s" % (tuple(reshaped), ))
+            print_shape_str += "with hw transposed data "
+        print_shape_str += "shown in %s" % (tuple(reshaped), )
 
         n_, c_, h_, w_ = reshaped
         if c_columns == -1: c_columns = c_
@@ -386,7 +397,7 @@ class NPZWrapper:
                 'w_split': w_,
                 }
 
-        return new_darray, data_mask, attr
+        return new_darray, data_mask, attr, print_shape_str
 
     def plot(self, tensor=None, abs_tol=None, rel_tol=None, figsize=6, vmin=None, vmax=None, **kwargs):
         if tensor is None:
@@ -404,7 +415,7 @@ class NPZWrapper:
         for key in tensors:
             print("tensor='%s'," % key)
             darray, data_mask, attr = self.get_darray(key, **kwargs)
-            real_mean, real_min, real_max = get_data_dist(darray, data_mask)
+            real_mean, real_min, real_max = self.get_data_dist(key, **kwargs)
             print("data distribution: mean %s, min %s, max %s" %
                   (real_mean, real_min, real_max))
 
@@ -424,9 +435,10 @@ class NPZWrapper:
                 vmax = abs_tol_ + rel_tol_  
             print(f"vmin {abs_tol_ - rel_tol_} zero point {abs_tol_} vmax {abs_tol_ + rel_tol_} ")
 
-            attr['title'] = "%s: %s" % (self.role, attr['title'])
+            _attr = {k: v for k, v in attr.items()}
+            _attr['title'] = "%s: %s" % (self.role, attr['title'])
             plot_2d_array(darray, data_mask, figsize=figsize,
-                          vmin=vmin, vmax=vmax, **attr)
+                          vmin=vmin, vmax=vmax, **_attr)
 
 
 class NPZComparer:
@@ -559,9 +571,10 @@ class NPZComparer:
             data_mask1 == data_mask2) and attr1 == attr2
         compare = calc_similarity(target, ref, data_mask1)
 
+        _attr = {k: v for k, v in attr1.items()}
         mask = 1 - np.isclose(target, ref, atol=abs_tol, rtol=rel_tol)
         if np.sum(mask) == 0:
-            attr1['title'] += ' - No difference'
+            _attr['title'] += ' - No difference'
             warnings.warn("No difference under given tolerances.")
 
         diff = target - ref
@@ -569,7 +582,7 @@ class NPZComparer:
         if rel_tol != 0:
             abs_ref = np.abs(ref)
             diff /= abs_ref + ((diff == 0) * (abs_ref == 0) if abs_tol == 0 else abs_tol / rel_tol)
-        attr1['title'] = 'Diff: %s' % attr1['title']
+        _attr['title'] = 'Diff: %s' % _attr['title']
 
         return diff, data_mask1, attr1, compare
 
@@ -634,14 +647,13 @@ class NPZComparer:
             warnings.warn(
                 "vmin and vmax has changed to diffmin and diffmax. Now vmin and vmax affect plot_ref and plot_target.", Warning)
         for key in tensors:
-            target_darray, data_mask1, attr1 = self.target.get_darray(
-                key, print_shape=False, **kwargs)
-            ref_darray, data_mask2, attr2 = self.ref.get_darray(
-                key, print_shape=False, **kwargs)
-            assert np.all(data_mask1 == data_mask2) and attr1 == attr2
-            target_mean, target_min, target_max = get_data_dist(
-                target_darray, data_mask1)
-            ref_mean, ref_min, ref_max = get_data_dist(ref_darray, data_mask2)
+            # target_darray, data_mask1, attr1 = self.target.get_darray(
+            #     key, print_shape=False, **kwargs)
+            # ref_darray, data_mask2, attr2 = self.ref.get_darray(
+            #     key, print_shape=False, **kwargs)
+            # assert np.all(data_mask1 == data_mask2) and attr1 == attr2
+            target_mean, target_min, target_max = self.target.get_data_dist(key, **kwargs)
+            ref_mean, ref_min, ref_max = self.ref.get_data_dist(key, **kwargs)
             zp = zero_point if not zero_point is None else (target_mean + ref_mean) / 2
             all_min = vmin if not vmin is None else min(target_min, ref_min)
             all_max = vmax if not vmax is None else max(target_max, ref_max)

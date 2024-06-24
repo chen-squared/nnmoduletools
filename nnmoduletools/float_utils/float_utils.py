@@ -65,7 +65,7 @@ class floating:
                 self.memory = np.array(memory, dtype=self.memory_dtype)
 
     def __repr__(self):
-        elem_repr = f"%s(0x%0{self.bits // 4}x)"
+        elem_repr = f"%#.10g(0x%0{self.bits // 4}x)"
         data_repr = ", ".join([elem_repr % (v, m) for v, m in zip(self.value.flatten(), self.memory.flatten())])
         return f"{self.__class__.__name__}[{data_repr}]"
 
