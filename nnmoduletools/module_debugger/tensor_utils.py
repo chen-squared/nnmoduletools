@@ -69,13 +69,13 @@ def to_flat_dict(d, parent_key='', sep='_'):
 @apply_recursively(destroy_dict=False)
 def tensors_to_numpy(tensor):
     if isinstance(tensor, torch.Tensor):
-        return tensor.cpu().detach().numpy()
+        return tensor.cpu().detach().float().numpy()
     return None
 
 @apply_recursively(destroy_dict=False)
 def tensor_grads_to_numpy(tensor):
     if isinstance(tensor, torch.Tensor):
-        return tensor.grad.cpu().detach().numpy() if tensor.grad is not None else None
+        return tensor.grad.cpu().detach().float().numpy() if tensor.grad is not None else None
     return None
 
 prepare_tensor_for_save = lambda x: to_flat_dict(tensors_to_numpy(x))

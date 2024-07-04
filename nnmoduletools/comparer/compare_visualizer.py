@@ -38,11 +38,19 @@ def color_str(text: str, color: str | None = None) -> str:
 # NPZ Compare Visualizer #
 ##########################
 
-default_tol = {'f32': {'abs_tol': 2 ** -126, 'rel_tol': 2 ** -23},
-               'f16': {'abs_tol': 2 ** -14, 'rel_tol': 2 ** -10},
-               'bf16': {'abs_tol': 2 ** -126, 'rel_tol': 2 ** -7},
-               'int8': {'abs_tol': 0., 'rel_tol': 0.}}
-
+def get_default_tolerance(dtype):
+    if dtype in [np.float32, torch.float32, float, "fp32", "f32"]:
+        return 1e-8, 1e-3
+    elif dtype in [np.float16, torch.float16, "fp16", "f16"]:
+        return 6e-8, 1 / 1024
+    elif dtype in [torch.bfloat16, "bf16", "bfp16"]:
+        return 1e-8, 1 / 128
+    elif dtype in [np.int8, torch.int8, "int8", "i8"]:
+        return 0., 0.
+    else:
+        print(f"Unknown dtype {dtype}, using default tolerance.")
+        return 1e-8, 1e-3
+    
 class NPZErrWrapper:
     def __init__(self, npz, role):
         assert isinstance(npz, np.lib.npyio.NpzFile)
@@ -105,8 +113,7 @@ def model_tpu_comparer(fn):
     return NPZComparer(pattern % "_model_", pattern % "_tpu_")
 
 
-def get_nchw(darray, mix_axis):
-    shape = darray.shape
+def get_nchw(shape, mix_axis):
     dims = len(shape)
     reshaped = [1, 1, 1, 1]
     if mix_axis is None:
@@ -154,7 +161,7 @@ def assign_hw(h, w, new_hw):
         return h1, w1
 
 
-def assign_new_shape(reshaped, resize_hw):
+def assign_new_shape(reshaped, resize_hw, data_mask=True):
     h, w = reshaped[2], reshaped[3]
     if isinstance(resize_hw, str):
         if resize_hw.lower() == "rectangle" or resize_hw.lower() == "auto":
@@ -175,7 +182,8 @@ def assign_new_shape(reshaped, resize_hw):
         pass
     else:
         assert 0, "Invalid param resize_hw=%s" % resize_hw
-    return np.array([1] * (h * w) + [0] * (reshaped[2] * reshaped[3] - h * w)).reshape((reshaped[2], reshaped[3]))
+    if data_mask:
+        return np.array([1] * (h * w) + [0] * (reshaped[2] * reshaped[3] - h * w)).reshape((reshaped[2], reshaped[3]))
 
 
 def get_data_dist(darray, data_mask):
@@ -263,6 +271,96 @@ def make_slice_object(something):
     else:
         raise ValueError("Invalid slice param")
 
+def get_sliced_shape(shape, slices):
+    if slices is None:
+        return shape
+    result_shape = []
+    cnt = 0
+    for i, s in enumerate(slices):
+        slice_obj = make_slice_object(s)
+        if slice_obj is None:
+            result_shape.append(1)
+        else:
+            result_shape.append(len(range(*slice_obj.indices(shape[cnt]))))
+            cnt += 1
+    for i in range(cnt, len(shape)):
+        result_shape.append(shape[i])
+    return tuple(result_shape)
+
+def get_score(n, c, h, w, c_columns, h_w_ratio=1/2):
+    per_c = math.ceil(c / c_columns)
+    new_n, new_c = n * per_c, c_columns
+    return np.abs(h_w_ratio - (new_n * h) / (new_c * w))
+
+def rearrange_middle_first(arr):
+    result = []
+    i, j = 0, len(arr) - 1
+    while i <= j:
+        result.append(arr[i])
+        if i != j:
+            result.append(arr[j])
+        i += 1
+        j -= 1
+    return result
+
+def find_optimize_c(n, c, h, w, h_w_ratio=1/2):
+    c_columns = 1
+    score = np.inf
+    new_c_list = [i for i in range(1, c + 1) if c % i == 0]
+    if len(new_c_list) <= 2:
+        new_c_list = list(range(1, c + 1))
+    for i in rearrange_middle_first(new_c_list):
+        new_score = get_score(n, c, h, w, i, h_w_ratio)
+        if new_score <= score:
+            c_columns = i
+            score = new_score
+    return c_columns, score
+
+# def find_optimize_hw(n, c, h, w, c_columns, h_w_ratio=1/2):
+#     # print("find_optimize_hw", n, c, h, w, c_columns)
+#     score = np.inf
+#     new_h_list = [i for i in range(1, h * w + 1) if (h * w) % i == 0]
+#     for new_h in rearrange_middle_first(new_h_list):
+#         new_w = (w * h) // new_h
+#         new_score = get_score(n, c, new_h, new_w, c_columns, h_w_ratio)
+#         # print(c_columns, new_h, new_w, new_score)
+#         if new_score <= score:
+#             score = new_score
+#             resize_hw = (new_h, new_w)
+#     return resize_hw, score
+
+def find_optimize_chw(n, c, h, w, resize_hw, h_w_ratio=1/2):
+    # print("find_optimize_chw", n, c, h, w, resize_hw)
+    if resize_hw is not None:
+        shape = [n, c, h, w]
+        assign_new_shape(shape, resize_hw, data_mask=False)
+        c_columns, _ = find_optimize_c(*shape, h_w_ratio)
+        return c_columns, resize_hw
+    else:
+        score = np.inf
+        c_columns = 1
+        new_h_list = [i for i in range(1, h * w + 1) if (h * w) % i == 0]
+        if len(new_h_list) <= 2:
+            new_h_list = list(range(1, h * w + 1))
+        for new_h in rearrange_middle_first(new_h_list):
+            shape = [n, c, h, w]
+            _resize_hw = (new_h, -1)
+            assign_new_shape(shape, _resize_hw, data_mask=False)
+            new_c, new_score = find_optimize_c(*shape, h_w_ratio)
+            if new_score <= score:
+                score = new_score
+                resize_hw = _resize_hw
+                c_columns = new_c
+        # shape = [n, c, h, w]
+        # c_columns = 1
+        # new_c_list = [i for i in range(1, c + 1) if c % i == 0]
+        # for i in rearrange_middle_first(new_c_list):
+        #     _resize_hw, new_score = find_optimize_hw(*shape, i, h_w_ratio)
+        #     if new_score <= score:
+        #         score = new_score
+        #         resize_hw = _resize_hw
+        #         c_columns = i
+        return c_columns, resize_hw
 
 class NPZWrapper:
     def __init__(self, npz, role="darray"):
@@ -336,7 +434,7 @@ class NPZWrapper:
             darray = self[tensor].reshape(1).astype(float)
         else:
             darray = self[tensor][slice_list].astype(float)
-        reshaped = get_nchw(darray, mix_axis)
+        reshaped = get_nchw(darray.shape, mix_axis)
         print_shape_str = ""
         if not slices is None:
             print_shape_str +="sliced "
@@ -584,7 +682,7 @@ class NPZComparer:
             diff /= abs_ref + ((diff == 0) * (abs_ref == 0) if abs_tol == 0 else abs_tol / rel_tol)
         _attr['title'] = 'Diff: %s' % _attr['title']
 
-        return diff, data_mask1, attr1, compare
+        return diff, data_mask1, _attr, compare
 
     def plot_diff(self, tensor=None, abs_tol=0, rel_tol=0, figsize=6, vmin=None, vmax=None, **kwargs):
         if tensor is None:
@@ -618,6 +716,51 @@ class NPZComparer:
 
     def plot(self, *args, **kwargs):
         self.plot_diff(*args, **kwargs)
+
+    def plot_vs_auto(self, tensor=None, abs_tol=None, rel_tol=None, figsize=6, diffmin=-0.1, diffmax=0.1, 
+                     zero_point=0.0, vmin=None, vmax=None,
+                     slices=None, index=None, c_columns=None, resize_hw=None, transpose_hw=False, mix_axis=None,
+                     dtype=None, h_w_ratio=1/2,
+                     dump=False, verbose=False):
+        # auto calculate c_column and resize_hw according to h_w_ratio, default=1/2
+        if tensor is None:
+            tensor = list(self.keys())[0]
+
+        original_shape = self.ref[tensor].shape
+        sliced_shape = get_sliced_shape(original_shape, slices)
+        
+        reshaped = get_nchw(sliced_shape, mix_axis)
+        if reshaped[0] > reshaped[1]:
+            slices = (None, *slices) if slices is not None else (None, )
+            sliced_shape = get_sliced_shape(original_shape, slices)
+            mix_axis = [dim + 1 for dim in mix_axis] if mix_axis is not None else None
+            reshaped = get_nchw(sliced_shape, mix_axis)
+
+        n, c, h, w = reshaped
+        if c_columns is None:
+            c_columns, resize_hw = find_optimize_chw(n, c, h, w, resize_hw, h_w_ratio)
+
+        # passing a dtype to get default abs_tol and rel_tol for the dtype
+        if dtype is None:
+            if abs_tol is None and rel_tol is None:
+                abs_tol, rel_tol = 1e-8, 1e-3
+            if abs_tol is None: abs_tol = 0
+            if rel_tol is None: rel_tol = 0
+        else:
+            if abs_tol is not None or rel_tol is not None:
+                warnings.warn("dtype is set, abs_tol and rel_tol will be ignored.", Warning)
+            abs_tol, rel_tol = get_default_tolerance(dtype)
+
+        # calculate vmin and vmax using ref up 95% percentile
+        if vmin is None and vmax is None:
+            # target_darray = self.target._get_darray(self, tensor, slices, index, c_columns, resize_hw, transpose_hw, mix_axis)
+            ref_darray, data_mask, _, _ = self.ref._get_darray(tensor, slices, index, c_columns, resize_hw, transpose_hw, mix_axis)
+            up_95 = np.percentile(np.abs(ref_darray[data_mask == 1]), 95)
+            vmin, vmax = -up_95, up_95
+
+        self.plot_vs(tensor=tensor, abs_tol=abs_tol, rel_tol=rel_tol, figsize=figsize, diffmin=diffmin, diffmax=diffmax, zero_point=zero_point, vmin=vmin, vmax=vmax,
+                     slices=slices, index=index, c_columns=c_columns, resize_hw=resize_hw, transpose_hw=transpose_hw, mix_axis=mix_axis,
+                     dump=dump, verbose=verbose)
 
     def plot_vs(self, tensor=None, abs_tol=1e-8, rel_tol=1e-3, figsize=6, diffmin=-0.1, diffmax=0.1, 
                 zero_point=0.0, vmin=None, vmax=None,
