@@ -39,11 +39,11 @@ def color_str(text: str, color: str | None = None) -> str:
 ##########################
 
 def get_default_tolerance(dtype):
-    if dtype in [np.float32, torch.float32, float, "fp32", "f32"]:
+    if dtype in [np.float32, torch.float32, float, "fp32", "f32", "float32", "float"]:
         return 1e-8, 1e-3
-    elif dtype in [np.float16, torch.float16, "fp16", "f16"]:
+    elif dtype in [np.float16, torch.float16, "fp16", "f16", "float16", "half"]:
         return 6e-8, 1 / 1024
-    elif dtype in [torch.bfloat16, "bf16", "bfp16"]:
+    elif dtype in [torch.bfloat16, "bf16", "bfp16", "bfloat16"]:
         return 1e-8, 1 / 128
     elif dtype in [np.int8, torch.int8, "int8", "i8"]:
         return 0., 0.
