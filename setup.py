@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='nnmoduletools',
-    version='0.0.9-alpha',
+    version='0.0.10-alpha',
     description='A collection of neural network utilities',
     long_description=open('README.md').read(),
     long_description_content_type='text/markdown',

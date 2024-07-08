@@ -204,7 +204,7 @@ def get_data_dist(darray, data_mask):
     return real_mean, real_min, real_max
 
 
-def plot_2d_array(diff, data_mask=None, title="", figsize=6, vmin=-0.1, vmax=0.1, h_split=None, w_split=None):
+def plot_2d_array(diff, data_mask=None, title="", figsize=6, vmin=-0.1, vmax=0.1, h_split=None, w_split=None, save_fig=False, save_path=None):
     figwidth = figsize
     figheight = 3 + figsize / diff.shape[1] * diff.shape[0]
     plt.figure(figsize=(figwidth, figheight))
@@ -253,6 +253,19 @@ def plot_2d_array(diff, data_mask=None, title="", figsize=6, vmin=-0.1, vmax=0.1
     plt.title(title if title_len <= title_line else "\n".join(
         [title[i: i + title_line] for i in range(0, title_len, title_line)]))
     # plt.colorbar()
+    if save_fig:
+        if save_path:
+            path_to_save = Path(save_path)
+        else:
+            splited = title.split(": ")
+            if len(splited) == 2:
+                role, name = splited
+            else:
+                role, name = "plot", title
+            path_to_save = Path(f"{name}_{role.lower()}".replace(" ", "_"))
+        path_to_save = path_to_save.with_suffix(".png")
+        plt.savefig(path_to_save, bbox_inches='tight', pad_inches=0.1)
+        print(f"Figure saved to ![{path_to_save.__str__()}]({path_to_save.__str__()})")
     plt.show()
 
 
@@ -497,7 +510,7 @@ class NPZWrapper:
 
         return new_darray, data_mask, attr, print_shape_str
 
-    def plot(self, tensor=None, abs_tol=None, rel_tol=None, figsize=6, vmin=None, vmax=None, **kwargs):
+    def plot(self, tensor=None, abs_tol=None, rel_tol=None, figsize=6, vmin=None, vmax=None, save_fig=False, save_path=None, **kwargs):
         if tensor is None:
             warnings.warn(
                 "Your are plotting all the tensors in the NPZ file. This may cause problems when the file is large.", Warning)
@@ -536,7 +549,8 @@ class NPZWrapper:
             _attr = {k: v for k, v in attr.items()}
             _attr['title'] = "%s: %s" % (self.role, attr['title'])
             plot_2d_array(darray, data_mask, figsize=figsize,
-                          vmin=vmin, vmax=vmax, **_attr)
+                          vmin=vmin, vmax=vmax,
+                          save_fig=save_fig, save_path=save_path, **_attr)
 
 
 class NPZComparer:
@@ -608,7 +622,7 @@ class NPZComparer:
         for key in tensors:
             print("tensor='%s'," % key, "#shape", self.ref[key].shape)
 
-    def compare(self, tolerance=(-1., -1.), tensor=None, verbose=1, summary=False):
+    def compare(self, tolerance=(-1., -1.), tensor=None, verbose=1, summary=False, get_failed=False):
         if tensor is None:
             tensors = self.keys
             if verbose:
@@ -636,6 +650,8 @@ class NPZComparer:
                 pool.join()
                 pbar.close()
 
+        if get_failed:
+            failed_list = []
         for key in tensors:
             result = results[key].get()
             PASS = 1
@@ -645,12 +661,16 @@ class NPZComparer:
                 if np.any(similarity[:2] < np.array(tolerance)):
                     PASS = 0
                     ALL_PASS = 0
+                    if get_failed:
+                        failed_list.append(key)
             if verbose and not summary:
                 print(color_str(f"tensor='{key}', #{self.ref[key].shape} {''.join(('%s: (%.6f, %.6f, %.6f)' % (k, *v) if isinstance(v, tuple) else '%s: %s' % (k, v)) for k, v in result.items())}{(' √' if PASS else ' ×') if tolerance != (-1., -1) else '' }", 'none' if tolerance == (-1., -1) else ('green' if PASS else 'red')))
                 if verbose > 1 and not PASS:
                     self.dump_vs(tensor=key, c_columns=-1, top_k=10)
         if verbose:
-            print(color_str(f"min_similarity: {tuple(min_similarity)}{(' √' if ALL_PASS else ' ×') if tolerance != (-1., -1.) else ''}", 'none' if tolerance == (-1., -1.) else ('green' if ALL_PASS else 'red')))
+            print(color_str(f"min_similarity: {tuple(min_similarity.tolist())}{(' √' if ALL_PASS else ' ×') if tolerance != (-1., -1.) else ''}", 'none' if tolerance == (-1., -1.) else ('green' if ALL_PASS else 'red')))
+        if get_failed:
+            return bool(ALL_PASS), failed_list
         return bool(ALL_PASS)
 
     def get_diff(self, tensor=None, abs_tol=0, rel_tol=0, **kwargs):
@@ -684,7 +704,7 @@ class NPZComparer:
 
         return diff, data_mask1, _attr, compare
 
-    def plot_diff(self, tensor=None, abs_tol=0, rel_tol=0, figsize=6, vmin=None, vmax=None, **kwargs):
+    def plot_diff(self, tensor=None, abs_tol=0, rel_tol=0, figsize=6, vmin=None, vmax=None, save_fig=False, save_path=None, **kwargs):
         if tensor is None:
             warnings.warn(
                 "Your are plotting all the tensors in the NPZ file. This may cause problems when the file is large.", Warning)
@@ -706,13 +726,14 @@ class NPZComparer:
             print(f'Max of {"rel" if rel_tol != 0 else "abs"} diff: neg {real_min}, pos {real_max}, mean {real_mean}')
             print(f'Abs of {"rel" if rel_tol != 0 else "abs"} diff: min {abs_min}, max {abs_max}, mean {abs_mean}')
             print(*(f"{k}: {v}" for k, v in compare.items()))
-            diff_max = max(abs(real_min if vmin is None else vmin), abs(real_max if vmax is None else vmax))
+            diff_max = max(abs(real_min) if vmin is None else min(abs(real_min), abs(vmin)), abs(real_max) if vmax is None else min(abs(real_max), abs(vmax)))
             if diff_max == 0:
                 diff_max += 0.1
             vmin_, vmax_ = -diff_max, diff_max
             print("diffmin %s diffmax %s" % (vmin_, vmax_))
             plot_2d_array(darray, data_mask, figsize=figsize,
-                          vmin=vmin_, vmax=vmax_, **attr)
+                          vmin=vmin_, vmax=vmax_,
+                          save_fig=save_fig, save_path=save_path, **attr)
 
     def plot(self, *args, **kwargs):
         self.plot_diff(*args, **kwargs)
@@ -721,10 +742,11 @@ class NPZComparer:
                      zero_point=0.0, vmin=None, vmax=None,
                      slices=None, index=None, c_columns=None, resize_hw=None, transpose_hw=False, mix_axis=None,
                      dtype=None, h_w_ratio=1/2,
+                     save_fig=False, save_dir=None,
                      dump=False, verbose=False):
         # auto calculate c_column and resize_hw according to h_w_ratio, default=1/2
         if tensor is None:
-            tensor = list(self.keys())[0]
+            tensor = list(self.keys)[0]
 
         original_shape = self.ref[tensor].shape
         sliced_shape = get_sliced_shape(original_shape, slices)
@@ -739,6 +761,8 @@ class NPZComparer:
         n, c, h, w = reshaped
         if c_columns is None:
             c_columns, resize_hw = find_optimize_chw(n, c, h, w, resize_hw, h_w_ratio)
+            if h != w and resize_hw == (w, -1) and transpose_hw == False:
+                transpose_hw = True
 
         # passing a dtype to get default abs_tol and rel_tol for the dtype
         if dtype is None:
@@ -760,11 +784,13 @@ class NPZComparer:
 
         self.plot_vs(tensor=tensor, abs_tol=abs_tol, rel_tol=rel_tol, figsize=figsize, diffmin=diffmin, diffmax=diffmax, zero_point=zero_point, vmin=vmin, vmax=vmax,
                      slices=slices, index=index, c_columns=c_columns, resize_hw=resize_hw, transpose_hw=transpose_hw, mix_axis=mix_axis,
+                     save_fig=save_fig, save_dir=save_dir,
                      dump=dump, verbose=verbose)
 
     def plot_vs(self, tensor=None, abs_tol=1e-8, rel_tol=1e-3, figsize=6, diffmin=-0.1, diffmax=0.1, 
                 zero_point=0.0, vmin=None, vmax=None,
                 slices=None, index=None, c_columns=32, resize_hw=None, transpose_hw=False, mix_axis=None,
+                save_fig=False, save_dir=None,
                 dump=False, verbose=False):
         # archive the kwargs for next dump_vs
         self.archived_kwargs = {}
@@ -803,11 +829,22 @@ class NPZComparer:
             scale = max(abs(all_max - zp), abs(all_min - zp))
             if scale == 0:
                 scale += 1E-10
+                
+            if save_fig and save_dir:
+                save_path = Path(save_dir)
+                if not save_path.exists():
+                    save_path.mkdir(parents=True)
+                target_path = save_path / f"{key}_target.png"
+                ref_path = save_path / f"{key}_ref.png"
+                diff_path = save_path / f"{key}_diff.png"
+            else:
+                target_path = ref_path = diff_path = None
 
-            self.target.plot(key, abs_tol=zp, rel_tol=scale, figsize=figsize, **kwargs)
-            self.ref.plot(key, abs_tol=zp, rel_tol=scale, figsize=figsize, **kwargs)
+            self.target.plot(key, abs_tol=zp, rel_tol=scale, figsize=figsize, save_fig=save_fig, save_path=target_path, **kwargs)
+            self.ref.plot(key, abs_tol=zp, rel_tol=scale, figsize=figsize, save_fig=save_fig, save_path=ref_path, **kwargs)
             self.plot_diff(key, abs_tol=abs_tol, rel_tol=rel_tol, figsize=figsize,
-                           vmin=diffmin, vmax=diffmax, **kwargs)
+                           vmin=diffmin, vmax=diffmax, 
+                           save_fig=save_fig, save_path=diff_path, **kwargs)
         if dump:
             self.dump_vs_plot(verbose=verbose)
 
@@ -869,10 +906,10 @@ class NPZComparer:
             if not top_k is None:
                 top_k = min(top_k, np.sum(data_mask1))
                 sorted_idx_x, sorted_idx_y = np.unravel_index(np.argsort(error_magnitude, axis=None), error_magnitude.shape)
-                error_idx_hw = zip(sorted_idx_x[:-top_k-1:-1], sorted_idx_y[:-top_k-1:-1])
+                error_idx_hw = zip(sorted_idx_x[:-top_k-1:-1].tolist(), sorted_idx_y[:-top_k-1:-1].tolist())
                 error_idx_nchw_hw = [(idx_to_nchw(idx, attr1), idx) for idx in error_idx_hw]
             else:
-                error_idx_hw = np.indices(error_magnitude.shape).reshape(2, -1).T
+                error_idx_hw = np.indices(error_magnitude.shape).reshape(2, -1).T.tolist()
                 error_idx_nchw_hw = sorted([(idx_to_nchw(idx, attr1), idx) for idx in error_idx_hw], key=lambda x: x[0])
                 
             for (n, c, h, w), (h_, w_) in error_idx_nchw_hw:
