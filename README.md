@@ -29,10 +29,10 @@ python -m pip install nnmoduletools
 
     See [tutorial.ipynb](tutorial.ipynb)
 
-    Now you can also use command line to compare two npz files:
+    Now you can also use command line to compare two npz files and generate a report:
 
     ```shell
-    python -m nnmoduletools.comparer target.npz ref.npz --tolerance 0.99,0.99 --verbose
+    python -m nnmoduletools.comparer target.npz ref.npz --tolerance 0.99,0.99 --verbose 3 --output_dir compare_report --output_fn compare_report.md
     ```
 
     See `python -m nnmoduletools.comparer --help` for more information.

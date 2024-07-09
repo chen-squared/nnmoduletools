@@ -2,6 +2,11 @@
 import torch
 import numpy as np
 
+import re
+import io
+import sys
+import os
+
 import matplotlib.pyplot as plt
 import math
 import warnings
@@ -16,6 +21,28 @@ from functools import lru_cache
 ###########################
 # Colored Print Functions #
 ###########################
+class Tee:
+    def __init__(self, file):
+        self.file = file
+        self.stdout = sys.stdout
+
+    def write(self, data):
+        self.file.write(data)
+        self.stdout.write(data)
+        self.flush()
+
+    def flush(self):
+        self.file.flush()
+        self.stdout.flush()
+        
+    def __enter__(self):
+        self.stdout = sys.stdout
+        sys.stdout = self
+        return self
+    
+    def __exit__(self, *args, **kwargs):
+        sys.stdout = self.stdout
+
 
 def color_str(text: str, color: str | None = None) -> str:
     if color is None or color.lower() == 'none':
@@ -33,6 +60,23 @@ def color_str(text: str, color: str | None = None) -> str:
     color_code = color_code_dict[color.lower()]
     return f"\033[{color_code}m{text}\033[0m"
 
+def ansi_to_html(text):
+    convert_dict = {
+        '\033[30m': '<span style="color:black;">',
+        '\033[31m': '<span style="color:red;">',
+        '\033[32m': '<span style="color:green;">',
+        '\033[33m': '<span style="color:yellow;">',
+        '\033[34m': '<span style="color:blue;">',
+        '\033[35m': '<span style="color:purple;">',
+        '\033[36m': '<span style="color:cyan;">',
+        '\033[37m': '<span style="color:white;">',
+        '\033[0m': '</span>'
+    }
+    
+    for ansi_code, html_code in convert_dict.items():
+        text = re.sub(re.escape(ansi_code), html_code, text)
+
+    return text
 
 ##########################
 # NPZ Compare Visualizer #
@@ -265,7 +309,7 @@ def plot_2d_array(diff, data_mask=None, title="", figsize=6, vmin=-0.1, vmax=0.1
             path_to_save = Path(f"{name}_{role.lower()}".replace(" ", "_"))
         path_to_save = path_to_save.with_suffix(".png")
         plt.savefig(path_to_save, bbox_inches='tight', pad_inches=0.1)
-        print(f"Figure saved to ![{path_to_save.__str__()}]({path_to_save.__str__()})")
+        print(f"![{path_to_save.__str__()}]({path_to_save.__str__()})")
     plt.show()
 
 
@@ -745,47 +789,58 @@ class NPZComparer:
                      save_fig=False, save_dir=None,
                      dump=False, verbose=False):
         # auto calculate c_column and resize_hw according to h_w_ratio, default=1/2
+        tensors = []
         if tensor is None:
-            tensor = list(self.keys)[0]
-
-        original_shape = self.ref[tensor].shape
-        sliced_shape = get_sliced_shape(original_shape, slices)
-        
-        reshaped = get_nchw(sliced_shape, mix_axis)
-        if reshaped[0] > reshaped[1]:
-            slices = (None, *slices) if slices is not None else (None, )
-            sliced_shape = get_sliced_shape(original_shape, slices)
-            mix_axis = [dim + 1 for dim in mix_axis] if mix_axis is not None else None
-            reshaped = get_nchw(sliced_shape, mix_axis)
-
-        n, c, h, w = reshaped
-        if c_columns is None:
-            c_columns, resize_hw = find_optimize_chw(n, c, h, w, resize_hw, h_w_ratio)
-            if h != w and resize_hw == (w, -1) and transpose_hw == False:
-                transpose_hw = True
-
-        # passing a dtype to get default abs_tol and rel_tol for the dtype
-        if dtype is None:
-            if abs_tol is None and rel_tol is None:
-                abs_tol, rel_tol = 1e-8, 1e-3
-            if abs_tol is None: abs_tol = 0
-            if rel_tol is None: rel_tol = 0
+            warnings.warn(
+                "Your are plotting all the tensors in the NPZ file. This may cause problems when the file is large.", Warning)
+            tensors.extend(self.keys)
         else:
-            if abs_tol is not None or rel_tol is not None:
-                warnings.warn("dtype is set, abs_tol and rel_tol will be ignored.", Warning)
-            abs_tol, rel_tol = get_default_tolerance(dtype)
+            if isinstance(tensor, list):
+                for tensor in tensor:
+                    assert tensor in self.keys
+                    tensors.append(tensor)
+            else:
+                tensors.append(tensor)
 
-        # calculate vmin and vmax using ref up 95% percentile
-        if vmin is None and vmax is None:
-            # target_darray = self.target._get_darray(self, tensor, slices, index, c_columns, resize_hw, transpose_hw, mix_axis)
-            ref_darray, data_mask, _, _ = self.ref._get_darray(tensor, slices, index, c_columns, resize_hw, transpose_hw, mix_axis)
-            up_95 = np.percentile(np.abs(ref_darray[data_mask == 1]), 95)
-            vmin, vmax = -up_95, up_95
+        for key in tensors:
+            original_shape = self.ref[key].shape
+            sliced_shape = get_sliced_shape(original_shape, slices)
+            
+            reshaped = get_nchw(sliced_shape, mix_axis)
+            if reshaped[0] > reshaped[1]:
+                slices = (None, *slices) if slices is not None else (None, )
+                sliced_shape = get_sliced_shape(original_shape, slices)
+                mix_axis = [dim + 1 for dim in mix_axis] if mix_axis is not None else None
+                reshaped = get_nchw(sliced_shape, mix_axis)
 
-        self.plot_vs(tensor=tensor, abs_tol=abs_tol, rel_tol=rel_tol, figsize=figsize, diffmin=diffmin, diffmax=diffmax, zero_point=zero_point, vmin=vmin, vmax=vmax,
-                     slices=slices, index=index, c_columns=c_columns, resize_hw=resize_hw, transpose_hw=transpose_hw, mix_axis=mix_axis,
-                     save_fig=save_fig, save_dir=save_dir,
-                     dump=dump, verbose=verbose)
+            n, c, h, w = reshaped
+            if c_columns is None:
+                c_columns, resize_hw = find_optimize_chw(n, c, h, w, resize_hw, h_w_ratio)
+                if h != w and resize_hw == (w, -1) and transpose_hw == False:
+                    transpose_hw = True
+
+            # passing a dtype to get default abs_tol and rel_tol for the dtype
+            if dtype is None:
+                if abs_tol is None and rel_tol is None:
+                    abs_tol, rel_tol = 1e-8, 1e-3
+                if abs_tol is None: abs_tol = 0
+                if rel_tol is None: rel_tol = 0
+            else:
+                if abs_tol is not None or rel_tol is not None:
+                    warnings.warn("dtype is set, abs_tol and rel_tol will be ignored.", Warning)
+                abs_tol, rel_tol = get_default_tolerance(dtype)
+
+            # calculate vmin and vmax using ref up 95% percentile
+            if vmin is None and vmax is None:
+                # target_darray = self.target._get_darray(self, key, slices, index, c_columns, resize_hw, transpose_hw, mix_axis)
+                ref_darray, data_mask, _, _ = self.ref._get_darray(key, slices, index, c_columns, resize_hw, transpose_hw, mix_axis)
+                up_95 = np.percentile(np.abs(ref_darray[data_mask == 1]), 95)
+                vmin, vmax = -up_95, up_95
+
+            self.plot_vs(tensor=key, abs_tol=abs_tol, rel_tol=rel_tol, figsize=figsize, diffmin=diffmin, diffmax=diffmax, zero_point=zero_point, vmin=vmin, vmax=vmax,
+                        slices=slices, index=index, c_columns=c_columns, resize_hw=resize_hw, transpose_hw=transpose_hw, mix_axis=mix_axis,
+                        save_fig=save_fig, save_dir=save_dir,
+                        dump=dump, verbose=verbose)
 
     def plot_vs(self, tensor=None, abs_tol=1e-8, rel_tol=1e-3, figsize=6, diffmin=-0.1, diffmax=0.1, 
                 zero_point=0.0, vmin=None, vmax=None,
@@ -845,8 +900,8 @@ class NPZComparer:
             self.plot_diff(key, abs_tol=abs_tol, rel_tol=rel_tol, figsize=figsize,
                            vmin=diffmin, vmax=diffmax, 
                            save_fig=save_fig, save_path=diff_path, **kwargs)
-        if dump:
-            self.dump_vs_plot(verbose=verbose)
+            if dump:
+                self.dump_vs_plot(verbose=verbose)
 
     def plot_ref(self, *args, **kwargs):
         self.ref.plot(*args, **kwargs)
@@ -923,7 +978,44 @@ class NPZComparer:
                                                              color_str("%#15.8g" % rel_diff[h_][w_], 'green' if abs(rel_diff[h_][w_]) <= rel_tol else color),
                                                              color_str("!" * int(error_mark), color)))
             print("")
-
+            
+    def report(self, tolerance=(0.99, 0.90), abs_tol=1e-8, rel_tol=1e-3, verbose=3, summary=False, output_dir="compare_report", output_fn="compare_report.md", title=""):
+        report_dir = Path(output_dir)
+        if verbose > 0 and not report_dir.exists():
+            report_dir.mkdir(parents=True)
+        original_dir = os.getcwd()
+        os.chdir(report_dir)
+        iostream = io.StringIO()
+        with Tee(iostream):
+            print(f"# Compare Report: {title}")
+            ret = self.compare(tolerance=tolerance, verbose=verbose, summary=summary, get_failed=verbose > 2)
+            if verbose > 2:
+                ret, failed = ret
+                to_plot = list(self.keys) if verbose > 3 else failed
+                print(f"## Plots")
+                print(f"Plotting {'all' if verbose > 3 else 'failed'} tensors")
+                for tensor in to_plot:
+                    print(f"### {tensor}")
+                    self.plot_vs_auto(tensor=tensor, abs_tol=abs_tol, rel_tol=rel_tol, figsize=20, save_fig=True, save_dir="plots")
+                    self.dump_vs_plot(top_k=20)
+        if verbose > 0:
+            iostream.seek(0)
+            writelines = iostream.read().split("\n")
+            with Path(output_fn).with_suffix(".md").open('w') as f:
+                for line in writelines:
+                    if line.startswith("##"):
+                        f.write(f"</pre>\n{line}\n<pre>")
+                    elif line.startswith("#"):
+                        f.write(f"{line}\n<pre>")
+                    elif line.startswith("!["):
+                        f.write(f"</pre>\n{line}\n<pre>")
+                    else:
+                        line = ansi_to_html(line)
+                        f.write(f"{line}\n")
+                f.write("</pre>")
+        os.chdir(original_dir)
+        return ret
+    
 def idx_to_nchw(idx, attr):
     if attr['w_split'] is None and attr['h_split'] is None:
         return (0, 0, *idx)
