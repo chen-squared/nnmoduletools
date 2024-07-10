@@ -37,6 +37,19 @@ python -m pip install nnmoduletools
 
     See `python -m nnmoduletools.comparer --help` for more information.
 
+    You can also use `Reporter` to generate your own report:
+
+    ```Python
+    from nnmoduletools.comparer import Reporter
+    with Reporter("path/to/output/dir", "report.md"):
+        comparer = nnmoduletools.NPZComparer("path/to/target.npz", "path/to/ref.npz")
+        print("# Compare Report: tensor")
+        comparer.plot_vs_auto(tensor="tensor", save_fig=True, save_dir="subdir")
+        comparer.dump_vs_plot(top_k=20)
+    ```
+
+    You will have your report in `path/to/output/dir/report.md` and the plots in `path/to/output/dir/subdir/`.
+
 2. float utils
 
     See [tutorial.ipynb](tutorial.ipynb)

@@ -43,6 +43,48 @@ class Tee:
     def __exit__(self, *args, **kwargs):
         sys.stdout = self.stdout
 
+class Reporter:
+    def __init__(self, output_dir=None, output_fn=None):
+        self.output_dir = Path(output_dir) if output_dir else None
+        self.output_fn = Path(output_fn)
+    
+    def __enter__(self):
+        if self.output_dir and self.output_fn:
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+            self.original_dir = os.getcwd()
+            os.chdir(self.output_dir)
+            # test write
+            with self.output_fn.with_suffix(".md").open('w') as f:
+                f.write("Report is being generated...")
+            self.iostream = io.StringIO()
+            self.tee = Tee(self.iostream)
+            self.tee.__enter__()
+        return self
+    
+    def __exit__(self, *args, **kwargs):
+        if self.output_fn and self.output_fn:
+            self.tee.__exit__()
+            self.iostream.seek(0)
+            writelines = self.iostream.read().split("\n")
+            with io.StringIO() as f:
+                for line in writelines:
+                    if line.startswith("##"):
+                        f.write(f"</pre>\n{line}\n<pre>")
+                    elif line.startswith("#"):
+                        f.write(f"{line}\n<pre>")
+                    elif line.startswith("!["):
+                        f.write(f"</pre>\n{line}\n<pre>")
+                    else:
+                        line = ansi_to_html(line)
+                        f.write(f"{line}\n")
+                f.write("</pre>")
+                f.seek(0)
+                to_write = f.read()
+            to_write = re.sub(r"<pre>\n*?</pre>", "", to_write)
+            to_write = re.sub(r"\n{3,}", "\n\n", to_write)
+            with self.output_fn.with_suffix(".md").open('w') as f:
+                f.write(to_write)
+            os.chdir(self.original_dir)
 
 def color_str(text: str, color: str | None = None) -> str:
     if color is None or color.lower() == 'none':
@@ -978,43 +1020,23 @@ class NPZComparer:
                                                              color_str("%#15.8g" % rel_diff[h_][w_], 'green' if abs(rel_diff[h_][w_]) <= rel_tol else color),
                                                              color_str("!" * int(error_mark), color)))
             print("")
-            
+
     def report(self, tolerance=(0.99, 0.90), abs_tol=1e-8, rel_tol=1e-3, verbose=3, summary=False, output_dir="compare_report", output_fn="compare_report.md", title=""):
-        report_dir = Path(output_dir)
-        if verbose > 0 and not report_dir.exists():
-            report_dir.mkdir(parents=True)
-        original_dir = os.getcwd()
-        os.chdir(report_dir)
-        iostream = io.StringIO()
-        with Tee(iostream):
+        if verbose == 0:
+            output_dir = output_fn = None
+        with Reporter(output_dir, output_fn):
             print(f"# Compare Report: {title}")
+            print(f"## Result")
             ret = self.compare(tolerance=tolerance, verbose=verbose, summary=summary, get_failed=verbose > 2)
             if verbose > 2:
                 ret, failed = ret
                 to_plot = list(self.keys) if verbose > 3 else failed
-                print(f"## Plots")
-                print(f"Plotting {'all' if verbose > 3 else 'failed'} tensors")
+                if to_plot:
+                    print(f"## Plots of {'all' if verbose > 3 else 'failed'} tensors")
                 for tensor in to_plot:
                     print(f"### {tensor}")
-                    self.plot_vs_auto(tensor=tensor, abs_tol=abs_tol, rel_tol=rel_tol, figsize=20, save_fig=True, save_dir="plots")
-                    self.dump_vs_plot(top_k=20)
-        if verbose > 0:
-            iostream.seek(0)
-            writelines = iostream.read().split("\n")
-            with Path(output_fn).with_suffix(".md").open('w') as f:
-                for line in writelines:
-                    if line.startswith("##"):
-                        f.write(f"</pre>\n{line}\n<pre>")
-                    elif line.startswith("#"):
-                        f.write(f"{line}\n<pre>")
-                    elif line.startswith("!["):
-                        f.write(f"</pre>\n{line}\n<pre>")
-                    else:
-                        line = ansi_to_html(line)
-                        f.write(f"{line}\n")
-                f.write("</pre>")
-        os.chdir(original_dir)
-        return ret
+                    self.plot_vs_auto(tensor=tensor, abs_tol=abs_tol, rel_tol=rel_tol, figsize=16, save_fig=True, save_dir="plots")
+                    self.dump_vs_plot(top_k=20)        
     
 def idx_to_nchw(idx, attr):
     if attr['w_split'] is None and attr['h_split'] is None:
