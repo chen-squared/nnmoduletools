@@ -295,15 +295,15 @@ def plot_2d_array(diff, data_mask=None, title="", figsize=6, vmin=-0.1, vmax=0.1
     figheight = 3 + figsize / diff.shape[1] * diff.shape[0]
     plt.figure(figsize=(figwidth, figheight))
     nan_mask = np.where(np.isnan(diff).astype(float) * data_mask, 1, np.nan)
-    pos_inf_mask = np.where(np.isposinf(diff).astype(float) * data_mask, 1, np.nan)
-    neg_inf_mask = np.where(np.isneginf(diff).astype(float) * data_mask, 1, np.nan)
-    plt.imshow(nan_mask, 'Greys', vmin=0, vmax=1.25)
-    plt.imshow(pos_inf_mask, 'Oranges', vmin=0, vmax=2)
-    plt.imshow(neg_inf_mask, 'Greens', vmin=0, vmax=1.5)
+    pos_inf_mask = np.where(np.isposinf(diff).astype(float) * data_mask, 9, np.nan)
+    neg_inf_mask = np.where(np.isneginf(diff).astype(float) * data_mask, 4, np.nan)
+    plt.imshow(nan_mask, 'Greys', vmin=0, vmax=1.1, interpolation="nearest")
+    plt.imshow(pos_inf_mask, 'Greens', vmin=0, vmax=10, interpolation="nearest")
+    plt.imshow(neg_inf_mask, 'Greens', vmin=0, vmax=10, interpolation="nearest")
     if not data_mask is None:
         # diff += np.where(data_mask == 0, np.nan, 0)
         diff[data_mask == 0] += np.nan
-    plt.imshow(diff, 'bwr', vmin=vmin, vmax=vmax)
+    plt.imshow(diff, 'bwr', vmin=vmin, vmax=vmax, interpolation="nearest")
     plt.xlim(-2, diff.shape[1] + 1)
     plt.ylim(diff.shape[0] + 1, -2)
     ax = plt.gca()
