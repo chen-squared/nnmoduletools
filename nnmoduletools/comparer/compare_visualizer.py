@@ -348,7 +348,10 @@ def plot_2d_array(diff, data_mask=None, title="", figsize=6, vmin=-0.1, vmax=0.1
                 role, name = splited
             else:
                 role, name = "plot", title
-            path_to_save = Path(f"{name}_{role.lower()}".replace(" ", "_"))
+                name = re.sub(r"[^a-zA-Z0-9_\(\)\-\.]", "_", name)
+            path_to_save = Path(f"{name}_{role.lower()}")
+        if not path_to_save.parent.exists():
+            path_to_save.parent.mkdir(parents=True)
         path_to_save = path_to_save.with_suffix(".png")
         plt.savefig(path_to_save, bbox_inches='tight', pad_inches=0.1)
         print(f"![{path_to_save.__str__()}]({path_to_save.__str__()})")
@@ -931,9 +934,10 @@ class NPZComparer:
                 save_path = Path(save_dir)
                 if not save_path.exists():
                     save_path.mkdir(parents=True)
-                target_path = save_path / f"{key}_target.png"
-                ref_path = save_path / f"{key}_ref.png"
-                diff_path = save_path / f"{key}_diff.png"
+                key_to_save = re.sub(r"[^a-zA-Z0-9_\(\)\-\.]", "_", key)
+                target_path = save_path / f"{key_to_save}_target.png"
+                ref_path = save_path / f"{key_to_save}_ref.png"
+                diff_path = save_path / f"{key_to_save}_diff.png"
             else:
                 target_path = ref_path = diff_path = None
 
