@@ -32,12 +32,12 @@ python -m pip install nnmoduletools
     Now you can also use command line to compare two npz files and generate a report:
 
     ```shell
-    python -m nnmoduletools.comparer target.npz ref.npz --tolerance 0.99,0.99 --verbose 3 --output_dir compare_report --output_fn compare_report.md
+    python -m nnmoduletools.comparer [--tolerance 0.99,0.99] [--abs_tol 1e-8] [--rel-tol 1e-3] [--verbose 3] [--output_dir compare_report] [--output_fn compare_report.md] [--info] [--dump [10]] target.npz ref.npz [tensor1 tensor2 ...] 
     ```
 
     See `python -m nnmoduletools.comparer --help` for more information.
 
-    You can also use `Reporter` to generate your own report:
+    The command line tool only support basic operations.  You can also use `Reporter` in Python scripts to generate your own report:
 
     ```Python
     from nnmoduletools.comparer import Reporter

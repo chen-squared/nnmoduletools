@@ -44,9 +44,10 @@ class Tee:
         sys.stdout = self.stdout
 
 class Reporter:
-    def __init__(self, output_dir=None, output_fn=None):
+    def __init__(self, output_dir=None, output_fn=None, mode="w"):
         self.output_dir = Path(output_dir) if output_dir else None
         self.output_fn = Path(output_fn)
+        self.mode=mode
     
     def __enter__(self):
         if self.output_dir and self.output_fn:
@@ -54,8 +55,11 @@ class Reporter:
             self.original_dir = os.getcwd()
             os.chdir(self.output_dir)
             # test write
-            with self.output_fn.with_suffix(".md").open('w') as f:
-                f.write("Report is being generated...")
+            with self.output_fn.with_suffix(".md").open(self.mode) as f:
+                if self.mode == "w":
+                    f.write("Report is being generated...")
+                else:
+                    f.write("")
             self.iostream = io.StringIO()
             self.tee = Tee(self.iostream)
             self.tee.__enter__()
@@ -82,7 +86,7 @@ class Reporter:
                 to_write = f.read()
             to_write = re.sub(r"<pre>\n*?</pre>", "", to_write)
             to_write = re.sub(r"\n{3,}", "\n\n", to_write)
-            with self.output_fn.with_suffix(".md").open('w') as f:
+            with self.output_fn.with_suffix(".md").open(self.mode) as f:
                 f.write(to_write)
             os.chdir(self.original_dir)
 
@@ -1025,22 +1029,55 @@ class NPZComparer:
                                                              color_str("!" * int(error_mark), color)))
             print("")
 
-    def report(self, tolerance=(0.99, 0.90), abs_tol=1e-8, rel_tol=1e-3, verbose=3, summary=False, output_dir="compare_report", output_fn="compare_report.md", title=""):
+    def report(self, tensor=None, tolerance=(0.99, 0.90), abs_tol=1e-8, rel_tol=1e-3, verbose=3, summary=False, output_dir="compare_report", output_fn="compare_report.md", title=""):
         if verbose == 0:
             output_dir = output_fn = None
+        tensors = []
+        if tensor is None:
+            tensors = None
+        else:
+            if isinstance(tensor, list):
+                for tensor in tensor:
+                    assert tensor in self.keys
+                    tensors.append(tensor)
+            else:
+                tensors.append(tensor)
         with Reporter(output_dir, output_fn):
             print(f"# Compare Report: {title}")
             print(f"## Result")
-            ret = self.compare(tolerance=tolerance, verbose=verbose, summary=summary, get_failed=verbose > 2)
+            ret = self.compare(tensor=tensors, tolerance=tolerance, verbose=verbose, summary=summary, get_failed=verbose > 2)
             if verbose > 2:
                 ret, failed = ret
                 to_plot = list(self.keys) if verbose > 3 else failed
                 if to_plot:
                     print(f"## Plots of {'all' if verbose > 3 else 'failed'} tensors")
-                for tensor in to_plot:
-                    print(f"### {tensor}")
-                    self.plot_vs_auto(tensor=tensor, abs_tol=abs_tol, rel_tol=rel_tol, figsize=16, save_fig=True, save_dir="plots")
-                    self.dump_vs_plot(top_k=20)        
+
+        if verbose > 2 and to_plot:
+            processes = {}
+            with Pool() as pool:
+                with tqdm(total=len(to_plot), desc="Plotting") as pbar:
+                    for i, tensor in enumerate(to_plot):
+                        processes[i] = pool.apply_async(report_one_tensor, args=(self.target[tensor], self.ref[tensor], tensor, abs_tol, rel_tol, 16, True, output_dir, i), callback=lambda x: pbar.update(1))
+                    pool.close()
+                    pool.join()
+                    pbar.close()
+
+            # merge report
+            with Reporter(output_dir, output_fn, "a"):
+                print("\n#")
+                for i in range(len(to_plot)):
+                    iostream = processes[i].get()
+                    print(iostream.getvalue())
+                      
+  
+def report_one_tensor(target, ref, tensor, abs_tol, rel_tol, figsize, save_fig, output_dir, i):
+    comparer = NPZComparer({tensor: target}, {tensor: ref})
+    iostream = io.StringIO()
+    with Tee(iostream):
+        print(f"### {tensor}")
+        comparer.plot_vs_auto(tensor=tensor, abs_tol=abs_tol, rel_tol=rel_tol, figsize=figsize, save_fig=save_fig, save_dir='plots')
+        comparer.dump_vs_plot(top_k=20)
+    return iostream
     
 def idx_to_nchw(idx, attr):
     if attr['w_split'] is None and attr['h_split'] is None:
