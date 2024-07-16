@@ -1057,7 +1057,7 @@ class NPZComparer:
             with Pool() as pool:
                 with tqdm(total=len(to_plot), desc="Plotting") as pbar:
                     for i, tensor in enumerate(to_plot):
-                        processes[i] = pool.apply_async(report_one_tensor, args=(self.target[tensor], self.ref[tensor], tensor, abs_tol, rel_tol, 16, True, output_dir, i), callback=lambda x: pbar.update(1))
+                        processes[i] = pool.apply_async(report_one_tensor, args=(self.target[tensor], self.ref[tensor], tensor, abs_tol, rel_tol, 16, True, output_dir), callback=lambda x: pbar.update(1))
                     pool.close()
                     pool.join()
                     pbar.close()
@@ -1070,13 +1070,16 @@ class NPZComparer:
                     print(iostream.getvalue())
                       
   
-def report_one_tensor(target, ref, tensor, abs_tol, rel_tol, figsize, save_fig, output_dir, i):
+def report_one_tensor(target, ref, tensor, abs_tol, rel_tol, figsize, save_fig, output_dir):
     comparer = NPZComparer({tensor: target}, {tensor: ref})
     iostream = io.StringIO()
     with Tee(iostream):
+        pwd = os.getcwd()
+        os.chdir(output_dir)
         print(f"### {tensor}")
         comparer.plot_vs_auto(tensor=tensor, abs_tol=abs_tol, rel_tol=rel_tol, figsize=figsize, save_fig=save_fig, save_dir='plots')
         comparer.dump_vs_plot(top_k=20)
+        os.chdir(pwd)
     return iostream
     
 def idx_to_nchw(idx, attr):
