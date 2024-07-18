@@ -6,9 +6,10 @@ import os
 from pathlib import Path
 
 class TensorSaveHelper:
-     _tensor_names_ = {}
-     _input_list = []
-     _result_list = []
+    _module_names_ = {}
+    _tensor_names_ = {}
+    _input_list = []
+    _result_list = []
 
 def get_tensor_name(name):
     count = TensorSaveHelper._tensor_names_.get(name, 0)
@@ -42,9 +43,9 @@ def check_nan_inf(tensor, name):
             
 def register_hook(module: torch.nn.Module):
     def pre_hook(module, args, kwargs):
-        func_name = str(module._get_name())
-        print_log(f"{func_name} forward start", flush=True)
-        save_result_tensors((*args, kwargs), f"forward_input_{func_name}")
+        module_name = TensorSaveHelper._module_names_[module]
+        print_log(f"{module_name} forward start", flush=True)
+        save_result_tensors((*args, kwargs), f"forward_input_{module_name}")
         check_nan_inf(args, "args")
         check_nan_inf(kwargs, "kwargs")
         check_nan_inf(module.parameters(), "parameters")
@@ -52,25 +53,25 @@ def register_hook(module: torch.nn.Module):
         
     def post_hook(module, input, output):
         decrease_indent()
-        func_name = str(module._get_name())
-        save_result_tensors(output, f"forward_output_{func_name}")
+        module_name = TensorSaveHelper._module_names_[module]
+        save_result_tensors(output, f"forward_output_{module_name}")
         check_nan_inf(output, "output")
-        print_log(f"{func_name} forward end", flush=True)
+        print_log(f"{module_name} forward end", flush=True)
         
     def pre_backward_hook(module, grad_output):
-        func_name = str(module._get_name())
-        print_log(f"{func_name} backward start", flush=True)
-        save_result_tensors(grad_output, f"backward_input_{func_name}")
+        module_name = TensorSaveHelper._module_names_[module]
+        print_log(f"{module_name} backward start", flush=True)
+        save_result_tensors(grad_output, f"backward_input_{module_name}")
         check_nan_inf(grad_output, "grad_output")
         check_nan_inf(module.parameters(), "parameters")
         increase_indent()
         
     def backward_hook(module, grad_input, grad_output):
         decrease_indent()
-        func_name = str(module._get_name())
-        save_result_tensors(grad_input, f"backward_output_{func_name}")
+        module_name = TensorSaveHelper._module_names_[module]
+        save_result_tensors(grad_input, f"backward_output_{module_name}")
         check_nan_inf(grad_input, "grad_input")
-        print_log(f"{func_name} backward end", flush=True)
+        print_log(f"{module_name} backward end", flush=True)
     
     if not_started():
         rank = int(os.environ.get("RANK", "0"))
@@ -90,6 +91,9 @@ def register_hook(module: torch.nn.Module):
     module.register_forward_hook(post_hook)
     module.register_full_backward_pre_hook(pre_backward_hook)
     module.register_full_backward_hook(backward_hook)
+    module_name = module._get_name()
+    for name, submodule in module.named_modules(prefix=module_name):
+        TensorSaveHelper._module_names_[submodule] = name if name == module_name else f"{name}-{submodule._get_name()}"
     
 def save_tensors(tensors, name, dir=".", save_grad_instead=False):
     if os.environ.get("DBG_SAVE_ALL", "0") == "0":
