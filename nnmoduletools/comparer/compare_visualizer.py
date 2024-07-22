@@ -937,7 +937,7 @@ class NPZComparer:
             if save_fig and save_dir:
                 save_path = Path(save_dir)
                 if not save_path.exists():
-                    save_path.mkdir(parents=True)
+                    save_path.mkdir(parents=True, exist_ok=True)
                 key_to_save = re.sub(r"[^a-zA-Z0-9_\(\)\-\.]", "_", key)
                 target_path = save_path / f"{key_to_save}_target.png"
                 ref_path = save_path / f"{key_to_save}_ref.png"

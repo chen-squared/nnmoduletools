@@ -125,19 +125,33 @@ def save_tensors(tensors, name, dir=".", save_grad_instead=False):
 def save_result_tensors(tensors, name):
     if not strtobool(os.environ.get("DBG_SAVE_ALL", "0")) and not strtobool(os.environ.get("DBG_SAVE_RESULTS", "0")):
         return
+    white_list = os.environ.get("DBG_SAVE_WHITELIST", "").split(",")
+    black_list = os.environ.get("DBG_SAVE_BLACKLIST", "").split(",")
+    if white_list:
+        if not any([w in name for w in white_list]):
+            return
+    if black_list:
+        if any([b in name for b in black_list]):
+            return
     ts_name = get_tensor_name(name)
     cache_result(ts_name)
     save_tensors(tensors, ts_name, "results")
 
-def save_model_params(module, step):
+def save_model_params(module, step, name_filter=None):
     if not strtobool(os.environ.get("DBG_SAVE_ALL", "0")) and not strtobool(os.environ.get("DBG_SAVE_PARAMS", "0")):
         return
-    save_tensors(dict(module.named_parameters()), f"params_{step}", "params")
+    if name_filter is not None:
+        save_tensors({k: v for k, v in module.named_parameters() if name_filter(k)}, f"params_{step}", "params")
+    else:
+        save_tensors(dict(module.named_parameters()), f"params_{step}", "params")
    
-def save_model_grads(module, step):
+def save_model_grads(module, step, name_filter=None):
     if not strtobool(os.environ.get("DBG_SAVE_ALL", "0")) and not strtobool(os.environ.get("DBG_SAVE_GRADS", "0")):
         return
-    save_tensors(dict(module.named_parameters()), f"grads_{step}", "grads", save_grad_instead=True)
+    if name_filter is not None:
+        save_tensors({k: v for k, v in module.named_parameters() if name_filter(k)}, f"grads_{step}", "grads", save_grad_instead=True)
+    else:
+        save_tensors(dict(module.named_parameters()), f"grads_{step}", "grads", save_grad_instead=True)
     # save_tensors(module.optimizer.bit16_groups, f"bit16_groups_{step}", "grads", save_grad_instead=True)
 
 class LogReader:

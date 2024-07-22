@@ -61,7 +61,7 @@ class floating:
             if isinstance(memory, floating):
                 self.memory = self.encode(memory.value)
             else:
-                assert np.all(0 <= memory < (1 << self.bits))
+                assert np.all(0 <= memory) and np.all(memory < (1 << self.bits))
                 self.memory = np.array(memory, dtype=self.memory_dtype)
 
     def __repr__(self):
