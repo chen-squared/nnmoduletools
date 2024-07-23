@@ -123,15 +123,16 @@ def save_tensors(tensors, name, dir=".", save_grad_instead=False):
     print_log(f"- saved {'grad' if save_grad_instead else 'tensor'} {name.replace('_', ' ')} in {fn}", flush=True)
 
 def save_result_tensors(tensors, name):
-    if not strtobool(os.environ.get("DBG_SAVE_ALL", "0")) and not strtobool(os.environ.get("DBG_SAVE_RESULTS", "0")):
+    white_list = os.environ.get("DBG_SAVE_WHITELIST", "")
+    black_list = os.environ.get("DBG_SAVE_BLACKLIST", "")
+    if not strtobool(os.environ.get("DBG_SAVE_ALL", "0")) and not strtobool(os.environ.get("DBG_SAVE_RESULTS", "0")) \
+       and not white_list and not black_list:
         return
-    white_list = os.environ.get("DBG_SAVE_WHITELIST", "").split(",")
-    black_list = os.environ.get("DBG_SAVE_BLACKLIST", "").split(",")
     if white_list:
-        if not any([w in name for w in white_list]):
+        if not any([w in name for w in white_list.split(",")]):
             return
     if black_list:
-        if any([b in name for b in black_list]):
+        if any([b in name for b in black_list.split(",")]):
             return
     ts_name = get_tensor_name(name)
     cache_result(ts_name)
