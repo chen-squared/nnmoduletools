@@ -120,7 +120,7 @@ def save_tensors(tensors, name, dir=".", save_grad_instead=False):
         np.savez(fn, **prepare_tensor_grad_for_save(tensors))
     else:
         np.savez(fn, **prepare_tensor_for_save(tensors))
-    print_log(f"- saved {'grad' if save_grad_instead else 'tensor'} {name.replace('_', ' ')} in {fn}", flush=True)
+    print_log(f"- saved {'grad' if save_grad_instead else 'tensor'} {name} in {fn}", flush=True)
 
 def save_result_tensors(tensors, name):
     white_list = os.environ.get("DBG_SAVE_WHITELIST", "")

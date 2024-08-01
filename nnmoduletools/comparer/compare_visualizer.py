@@ -152,8 +152,8 @@ class NPZErrWrapper:
     @property
     def valid_keys(self):
         if self._valid_keys is None:
-            self._valid_keys = {name[:-len(self.role)-1] for name in self.npz.keys() if name.endswith(self.role)}
-        assert isinstance(self._valid_keys, set)
+            self._valid_keys = {name[:-len(self.role)-1]: 1 for name in self.npz.keys() if name.endswith(self.role)}
+        assert isinstance(self._valid_keys, dict)
         return self._valid_keys
 
     def keys(self):
@@ -169,7 +169,7 @@ class NPZErrWrapper:
         return item in self.valid_keys
 
     def __iter__(self):
-        return iter(self.valid_keys())
+        return iter(self.valid_keys.keys())
 
     def __getitem__(self, key):
         return self.npz[f"{key}_{self.role}"]
