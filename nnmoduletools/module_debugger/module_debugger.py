@@ -43,6 +43,8 @@ def combine_npz(step):
     TensorSaveHelper._tensor_names_ = {}
 
 def check_nan_inf(tensor, name):
+    if strtobool(os.environ.get("DBG_SKIP_CHECK_NAN_INF", "0")):
+        return
     if has_nan_inf_tensor(tensor):
         print_log(f"- nan or inf in {name}", flush=True)
         # pdb.set_trace()
@@ -86,15 +88,17 @@ def register_hook(module: torch.nn.Module):
     if not_started():
         rank = int(os.environ.get("RANK", "0"))
         local_rank = int(os.environ.get("REAL_LOCAL_RANK", "0"))
+        topic = os.environ.get("DBG_TOPIC", None)
         try:
             from deepspeed import get_accelerator
             device = get_accelerator().device_name()
         except ImportError:
             device = os.environ.get("DBG_DEVICE", "unknown")
-
+        
         record_device(device)
         record_rank(rank)
         record_local_rank(local_rank)
+        record_topic(topic)
         mark_start()
     
     module.register_forward_pre_hook(pre_hook, with_kwargs=True)
@@ -156,17 +160,32 @@ def save_model_grads(module, step, name_filter=None):
     # save_tensors(module.optimizer.bit16_groups, f"bit16_groups_{step}", "grads", save_grad_instead=True)
 
 class LogReader:
-    def __init__(self, dir=None, devices=["tpu", "cuda"], rank=0):
+    def __init__(self, dir=None, devices=["tpu", "cuda"], rank=0, topic=None):
         self.rank = rank
-        self.dir = os.getcwd() if dir is None else dir
+        self.dir = Path.cwd() if dir is None else Path(dir)
+        self.topic = topic
         for device in devices:
             setattr(self.__class__, f"{device}_dir", property(lambda self, device=device: self.get_dir(device)))
+            setattr(self.__class__, f"{device}_dirs", property(lambda self, device=device: self.get_dirs(device)))
     
     def get_dir(self, device):
-        log_folders = glob.glob(os.path.join(self.dir, f"logs_*"))
-        log_folders.sort(key=lambda x: -os.path.getmtime(x))
+        return self.get_dirs(device, max_num=1)[0]
+            
+    def get_dirs(self, device, max_num=None):
+        log_folders = list(self.dir.glob("logs_*"))
+        log_folders.sort(key=lambda x: -x.stat().st_mtime)
+        ret = []
         for folder in log_folders:
-            log = open(Path(folder) / f"log_{self.rank}.txt", "r")
+            log = open(folder / f"log_{self.rank}.txt", "r")
             next(log)
-            if device in next(log):
-                return Path(folder)
+            if next(log).strip() == f"device: {device}, rank: {self.rank}":
+                if self.topic is not None:
+                    if next(log).strip() == f"Topic: {self.topic}":
+                        ret.append(folder)
+                        continue
+                else:
+                    ret.append(folder)
+                    continue
+            if max_num is not None and len(ret) >= max_num:
+                break
+        return ret

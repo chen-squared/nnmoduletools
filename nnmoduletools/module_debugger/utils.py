@@ -10,6 +10,7 @@ class GlobalVar:
     _rank_ = None
     _local_rank_ = None
     _device_ = None
+    _topic_ = None
 
 
 def get_indent():
@@ -61,6 +62,7 @@ def mark_start():
 
     print_log(f"Start time: {read_start_time_stamp()}")
     print_log(f"device: {read_device()}, rank: {read_rank()}")
+    print_log(f"Topic: {read_topic()}")
 
 def not_started():
     return GlobalVar._start_time_stamp_ is None
@@ -105,3 +107,10 @@ def record_device(device):
 def read_device():
     assert GlobalVar._device_ is not None
     return GlobalVar._device_
+
+def record_topic(topic):
+    assert GlobalVar._topic_ is None
+    GlobalVar._topic_ = topic
+    
+def read_topic():
+    return GlobalVar._topic_
