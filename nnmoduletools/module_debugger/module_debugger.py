@@ -43,10 +43,12 @@ def combine_npz(step):
     TensorSaveHelper._tensor_names_ = {}
 
 def check_nan_inf(tensor, name):
-    if strtobool(os.environ.get("DBG_SKIP_CHECK_NAN_INF", "0")):
+    if not strtobool(os.environ.get("DBG_CHECK_NAN_INF", "0")):
         return
     if has_nan_inf_tensor(tensor):
-        print_log(f"- nan or inf in {name}", flush=True)
+        print_log(f"- nan and inf check: {name} fail", flush=True)
+    else:
+        print_log(f"- nan and inf check: {name} pass", flush=True)
         # pdb.set_trace()
             
 def register_hook(module: torch.nn.Module):
@@ -108,7 +110,7 @@ def register_hook(module: torch.nn.Module):
     for name, submodule in module.named_modules(prefix="model"):
         TensorSaveHelper._module_names_[submodule] = name
     
-def save_tensors(tensors, name, dir=".", save_grad_instead=False):
+def save_tensors(tensors, name, dir=".", save_grad_instead=False, grad_attr="grad"):
     if not strtobool(os.environ.get("DBG_SAVE_ALL", "0")):
         return
     fn = get_log_file_path(f"{dir}/rank_{read_rank()}_{name}.npz")
@@ -121,7 +123,7 @@ def save_tensors(tensors, name, dir=".", save_grad_instead=False):
         fn = fn2
     if cnt > 0: print_log(f"- renaming to{fn}", flush=True)
     if save_grad_instead:
-        np.savez(fn, **prepare_tensor_grad_for_save(tensors))
+        np.savez(fn, **prepare_tensor_grad_for_save(tensors, grad_attr=grad_attr))
     else:
         np.savez(fn, **prepare_tensor_for_save(tensors))
     print_log(f"- saved {'grad' if save_grad_instead else 'tensor'} {name} in {fn}", flush=True)
@@ -150,13 +152,13 @@ def save_model_params(module, step, name_filter=None):
     else:
         save_tensors(dict(module.named_parameters()), f"params_{step}", "params")
    
-def save_model_grads(module, step, name_filter=None):
+def save_model_grads(module, step, name_filter=None, grad_attr="grad"):
     if not strtobool(os.environ.get("DBG_SAVE_ALL", "0")) and not strtobool(os.environ.get("DBG_SAVE_GRADS", "0")):
         return
     if name_filter is not None:
-        save_tensors({k: v for k, v in module.named_parameters() if name_filter(k)}, f"grads_{step}", "grads", save_grad_instead=True)
+        save_tensors({k: v for k, v in module.named_parameters() if name_filter(k)}, f"grads_{step}", "grads", save_grad_instead=True, grad_attr=grad_attr)
     else:
-        save_tensors(dict(module.named_parameters()), f"grads_{step}", "grads", save_grad_instead=True)
+        save_tensors(dict(module.named_parameters()), f"grads_{step}", "grads", save_grad_instead=True, grad_attr=grad_attr)
     # save_tensors(module.optimizer.bit16_groups, f"bit16_groups_{step}", "grads", save_grad_instead=True)
 
 class LogReader:
@@ -169,8 +171,9 @@ class LogReader:
             setattr(self.__class__, f"{device}_dirs", property(lambda self, device=device: self.get_dirs(device)))
     
     def get_dir(self, device):
-        return self.get_dirs(device, max_num=1)[0]
-            
+        dirs = self.get_dirs(device, max_num=1)
+        return dirs[0] if dirs else None
+
     def get_dirs(self, device, max_num=None):
         log_folders = list(self.dir.glob("logs_*"))
         log_folders.sort(key=lambda x: -x.stat().st_mtime)
