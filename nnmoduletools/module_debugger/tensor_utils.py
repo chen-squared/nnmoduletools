@@ -1,5 +1,6 @@
 import torch
 import types
+from functools import partial
 
 def int64_to_int32_and_check_overflow(tensor):
     assert tensor.dtype == torch.int64
@@ -15,7 +16,7 @@ def float64_to_float32_and_check_overflow(tensor):
         raise ValueError("float32 out of range")
     return tensor.float()
 
-def apply_recursively(reduce_func=None, destroy_dict=True):
+def apply_recursively(reduce_func=None, destroy_dict=True, delete_none=False):
     if reduce_func is None:
         _reduce_func = lambda x: x
     else:
@@ -23,11 +24,11 @@ def apply_recursively(reduce_func=None, destroy_dict=True):
     def wrapper(func):
         def inner_wrapper(object, *args, **kwargs):
             if isinstance(object, (list, tuple)):
-                return _reduce_func(object.__class__(inner_wrapper(t, *args, **kwargs) for t in object))
+                return _reduce_func(object.__class__(obj for t in object if not ((obj := inner_wrapper(t, *args, **kwargs)) is None and delete_none))) # do not swap the order of obj and detele_none. obj needs to be evaluated.
             elif isinstance(object, types.GeneratorType):
-                return _reduce_func(inner_wrapper(t, *args, **kwargs) for t in object)
+                return _reduce_func(obj for t in object if not ((obj := inner_wrapper(t, *args, **kwargs)) is None and delete_none))
             elif isinstance(object, dict):
-                return _reduce_func({k: inner_wrapper(v, *args, **kwargs) for k, v in object.items()})
+                return _reduce_func({k: obj for k, v in object.items() if not ((obj := inner_wrapper(v, *args, **kwargs)) is None and delete_none)})
             else:
                 return func(object, *args, **kwargs)
         return inner_wrapper
@@ -41,7 +42,7 @@ def to_str(object):
     else:
         return str(object)
 
-@apply_recursively(to_str, False)
+@apply_recursively(to_str, destroy_dict=False)
 def get_tensor_info(tensor):
     if isinstance(tensor, torch.Tensor):
         return f"<tensor={list(tensor.shape)}, dtype={str(tensor.dtype).replace('torch.', '')}>"
@@ -66,13 +67,13 @@ def to_flat_dict(d, parent_key='', sep='_'):
             items.append((parent_key, d))
     return dict(items)
 
-@apply_recursively(destroy_dict=False)
+@apply_recursively()
 def tensors_to_numpy(tensor):
     if isinstance(tensor, torch.Tensor):
         return tensor.cpu().detach().float().numpy()
     return None
 
-@apply_recursively(destroy_dict=False)
+@apply_recursively()
 def tensor_grads_to_numpy(tensor, grad_attr="grad"):
     if isinstance(tensor, torch.Tensor):
         if hasattr(tensor, grad_attr):
@@ -83,26 +84,28 @@ def tensor_grads_to_numpy(tensor, grad_attr="grad"):
 prepare_tensor_for_save = lambda x: to_flat_dict(tensors_to_numpy(x))
 prepare_tensor_grad_for_save = lambda x, grad_attr="grad": to_flat_dict(tensor_grads_to_numpy(x, grad_attr=grad_attr))
 
-
 @apply_recursively(any)
-def has_64bit_tensor(tensor):
-    return isinstance(tensor, torch.Tensor) and tensor.dtype in [torch.int64, torch.float64]
+def has_dtype_tensor(tensor, dtype):
+    return isinstance(tensor, torch.Tensor) and tensor.dtype in dtype if isinstance(dtype, (list, tuple)) else tensor.dtype == dtype
 
-@apply_recursively(any)
-def has_16bit_fp_tensor(tensor):
-    return isinstance(tensor, torch.Tensor) and tensor.dtype in [torch.half, torch.bfloat16]
-
-@apply_recursively(any)
-def has_32bit_fp_tensor(tensor):
-    return isinstance(tensor, torch.Tensor) and tensor.dtype == torch.float
+has_64bit_tensor = partial(has_dtype_tensor, dtype=[torch.int64, torch.float64])
+has_16bit_fp_tensor = partial(has_dtype_tensor, dtype=[torch.half, torch.bfloat16])
+has_32bit_fp_tensor = partial(has_dtype_tensor, dtype=torch.float32)
+has_64bit_fp_tensor = partial(has_dtype_tensor, dtype=torch.float64)
 
 @apply_recursively(any)
 def has_non_contiguous_tensor(tensor):
     return isinstance(tensor, torch.Tensor) and not tensor.is_contiguous()
 
 @apply_recursively(any)
-def has_tpu_tensor(tensor):
-    return isinstance(tensor, torch.Tensor) and str(tensor.device).startswith("tpu")
+def has_empty_tensor(tensor):
+    return isinstance(tensor, torch.Tensor) and tensor.numel() == 0
+
+@apply_recursively(any)
+def has_device_tensor(tensor, device):
+    return isinstance(tensor, torch.Tensor) and str(tensor.device).startswith(str(device))
+
+has_tpu_tensor = partial(has_device_tensor, device="tpu")
 
 @apply_recursively(any)
 def has_nan_inf_tensor(tensor):
@@ -163,3 +166,17 @@ def tensor_to_contiguous(tensor, *args):
 @apply_recursively()
 def tensor_identity(tensor, *args):
     return tensor
+
+@apply_recursively(delete_none=True)
+def tensor_nonempty(tensor, *args):
+    if isinstance(tensor, torch.Tensor) and tensor.numel() == 0:
+        return None
+    return tensor
+
+@apply_recursively()
+def get_tensor_attr(tensor, attr):
+    if isinstance(tensor, torch.Tensor):
+        return getattr(tensor, attr)
+    return None
+
+get_tensor_flat_attrs = lambda tensor, attr: list(to_flat_dict(get_tensor_attr(tensor, attr)).values())

@@ -42,13 +42,25 @@ def combine_npz(step):
     TensorSaveHelper._result_list = []
     TensorSaveHelper._tensor_names_ = {}
 
-def check_nan_inf(tensor, name):
+def check_nan_inf(tensors, names):
+    if not isinstance(tensors, (list, tuple)):
+        tensors = [tensors]
+    if not isinstance(names, (list, tuple)):
+        names = [names]
+    print_log("- " + ", ".join([f"{name}: {get_tensor_info(tensor)}" for name, tensor in zip(names, tensors)]), flush=True)
     if not strtobool(os.environ.get("DBG_CHECK_NAN_INF", "0")):
         return
-    if has_nan_inf_tensor(tensor):
-        print_log(f"- nan and inf check: {name} fail", flush=True)
-    else:
-        print_log(f"- nan and inf check: {name} pass", flush=True)
+    pass_names = []
+    fail_names = []
+    for name, tensor in zip(names, tensors):
+        if has_nan_inf_tensor(tensor):
+            fail_names.append(name)
+        else:
+            pass_names.append(name)
+    if pass_names:
+        print_log(f"- nan and inf check: {', '.join([name for name in pass_names])} pass", flush=True)
+    if fail_names:
+        print_log(f"- nan and inf check: {', '.join([name for name in fail_names])} fail", flush=True)
         # pdb.set_trace()
             
 def register_hook(module: torch.nn.Module):
@@ -56,35 +68,32 @@ def register_hook(module: torch.nn.Module):
         module_name = TensorSaveHelper._module_names_[module]
         class_name = module._get_name()
         print_log(f"{module_name} ({class_name}) forward start", flush=True)
+        check_nan_inf([args, kwargs, dict(module.named_parameters())],["args", "kwargs", "parameters"])
         save_result_tensors((*args, kwargs), f"forward_input_{module_name}")
-        check_nan_inf(args, "args")
-        check_nan_inf(kwargs, "kwargs")
-        check_nan_inf(module.parameters(), "parameters")
         increase_indent()
         
     def post_hook(module, input, output):
         decrease_indent()
         module_name = TensorSaveHelper._module_names_[module]
         class_name = module._get_name()
+        check_nan_inf([output], "output")
         save_result_tensors(output, f"forward_output_{module_name}")
-        check_nan_inf(output, "output")
         print_log(f"{module_name} ({class_name}) forward end", flush=True)
         
     def pre_backward_hook(module, grad_output):
         module_name = TensorSaveHelper._module_names_[module]
         class_name = module._get_name()
         print_log(f"{module_name} ({class_name}) backward start", flush=True)
+        check_nan_inf([grad_output, dict(module.named_parameters())], ["grad_output", "parameters"])
         save_result_tensors(grad_output, f"backward_input_{module_name}")
-        check_nan_inf(grad_output, "grad_output")
-        check_nan_inf(module.parameters(), "parameters")
         increase_indent()
         
     def backward_hook(module, grad_input, grad_output):
         decrease_indent()
         module_name = TensorSaveHelper._module_names_[module]
         class_name = module._get_name()
+        check_nan_inf([grad_input], "grad_input")
         save_result_tensors(grad_input, f"backward_output_{module_name}")
-        check_nan_inf(grad_input, "grad_input")
         print_log(f"{module_name} ({class_name}) backward end", flush=True)
     
     if not_started():
@@ -109,6 +118,25 @@ def register_hook(module: torch.nn.Module):
     module.register_full_backward_hook(backward_hook)
     for name, submodule in module.named_modules(prefix="model"):
         TensorSaveHelper._module_names_[submodule] = name
+    
+def register_hook_for_function(func, save_name="function"):
+    def wrapper(*args, **kwargs):
+        print_log(f"{save_name} {func.__name__} start", flush=True)
+        check_nan_inf([args, kwargs], ["args", "kwargs"])
+        save_result_tensors((*args, kwargs), f"{save_name}_{func.__name__}_input")
+        increase_indent()
+        res = func(*args, **kwargs)
+        decrease_indent()
+        check_nan_inf([res], "result")
+        save_result_tensors(res, f"{save_name}_{func.__name__}_output")
+        print_log(f"{save_name} {func.__name__} end", flush=True)
+        return res
+    return wrapper
+
+def register_hook_for_Function(cls: torch.autograd.Function):
+    cls.forward = register_hook_for_function(cls.forward, save_name=cls.__name__)
+    cls.backward = register_hook_for_function(cls.backward, save_name=cls.__name__)
+    return cls
     
 def save_tensors(tensors, name, dir=".", save_grad_instead=False, grad_attr="grad"):
     if not strtobool(os.environ.get("DBG_SAVE_ALL", "0")):
