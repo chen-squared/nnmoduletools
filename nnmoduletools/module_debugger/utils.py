@@ -27,6 +27,7 @@ def print_log(msg, flush=False, end='\n'):
     if not not_started():
         with open(os.path.join(GlobalVar._log_dir_, f"log_{read_rank()}.txt"), 'a') as f:
             f.write(f"{get_indent()}{msg}{end}")
+            f.flush()
     else:
         warnings.warn("Log file not specified. Logs are only printed to screen.")
     
@@ -47,9 +48,13 @@ def mark_start():
                     continue
                 closest_folder = log_folders[-1]
                 
-                current_time = time.strftime("%Y.%m.%d.%H.%M.%S")
-                closest_time = os.path.basename(closest_folder).replace("logs_", "")
-                if 0 <= time.mktime(time.strptime(current_time, "%Y.%m.%d.%H.%M.%S")) - time.mktime(time.strptime(closest_time, "%Y.%m.%d.%H.%M.%S")) < 10:
+                current_time = time.time()
+                closest_time_fn = os.path.basename(closest_folder).replace("logs_", "")
+                try:
+                    closest_time = time.mktime(time.strptime(closest_time_fn, "%Y.%m.%d.%H.%M.%S"))
+                except ValueError:
+                    continue
+                if 0 <= current_time - closest_time < 10:
                     break
                 else:
                     time.sleep(1)

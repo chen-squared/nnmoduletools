@@ -207,7 +207,12 @@ class LogReader:
         log_folders.sort(key=lambda x: -x.stat().st_mtime)
         ret = []
         for folder in log_folders:
-            log = open(folder / f"log_{self.rank}.txt", "r")
+            if max_num is not None and len(ret) >= max_num:
+                break
+            log_fn = folder / f"log_{self.rank}.txt"
+            if not log_fn.exists():
+                continue
+            log = open(log_fn, "r")
             next(log)
             if next(log).strip() == f"device: {device}, rank: {self.rank}":
                 if self.topic is not None:
@@ -217,6 +222,4 @@ class LogReader:
                 else:
                     ret.append(folder)
                     continue
-            if max_num is not None and len(ret) >= max_num:
-                break
         return ret
