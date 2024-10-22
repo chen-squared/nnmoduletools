@@ -63,7 +63,7 @@ def mark_start():
                         raise ValueError("Cannot find the start time stamp")
 
             set_log_dir(closest_folder)
-            GlobalVar._start_time_stamp_ = closest_time
+            GlobalVar._start_time_stamp_ = closest_time_fn
 
     print_log(f"Start time: {read_start_time_stamp()}")
     print_log(f"device: {read_device()}, rank: {read_rank()}")

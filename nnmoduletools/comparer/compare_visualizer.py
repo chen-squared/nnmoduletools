@@ -491,6 +491,9 @@ class NPZWrapper:
     def items(self):
         return self.npz.items()
 
+    def files(self):
+        return self.npz.files
+
     def __contains__(self, item):
         return item in self.npz
 
@@ -647,13 +650,14 @@ class NPZWrapper:
 
 
 class NPZComparer:
-    def __init__(self, target, ref):
+    def __init__(self, target, ref, allow_reshape=True):
         self.target = NPZWrapper(target, 'Target')
         self.ref = NPZWrapper(ref, 'Ref')
         self._keys = None
         self._error_keys = None
         self._isolated_keys = None
         self.archived_kwargs = {}
+        self.allow_reshape = allow_reshape
 
     # lazy initialization
     @property
@@ -663,7 +667,8 @@ class NPZComparer:
             self._error_keys = {}
             for key in tqdm(self.ref, desc="Loading NPZ"):
                 if key in self.target:
-                    if self.target[key].size != self.ref[key].size:
+                    if (self.allow_reshape and self.target[key].size != self.ref[key].size) or \
+                       (not self.allow_reshape and self.target[key].shape != self.ref[key].shape):
                         print(f"Error: Tensor {key} shape not same: {self.target[key].shape} vs {self.ref[key].shape}.")
                         self._error_keys[key] = 1
                     else:
