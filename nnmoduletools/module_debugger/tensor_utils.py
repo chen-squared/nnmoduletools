@@ -1,6 +1,6 @@
 import torch
 import types
-from functools import partial
+from functools import partial, wraps
 
 def int64_to_int32_and_check_overflow(tensor):
     assert tensor.dtype == torch.int64
@@ -22,6 +22,7 @@ def apply_recursively(reduce_func=None, destroy_dict=True, delete_none=False):
     else:
         _reduce_func = lambda x: reduce_func(x.values()) if destroy_dict and isinstance(x, dict) else reduce_func(x)
     def wrapper(func):
+        @wraps(func)
         def inner_wrapper(object, *args, **kwargs):
             if isinstance(object, (list, tuple)):
                 return _reduce_func(object.__class__(obj for t in object if not ((obj := inner_wrapper(t, *args, **kwargs)) is None and delete_none))) # do not swap the order of obj and detele_none. obj needs to be evaluated.

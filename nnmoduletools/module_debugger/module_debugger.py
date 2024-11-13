@@ -4,6 +4,7 @@ from distutils.util import strtobool
 import numpy as np
 import os
 from pathlib import Path
+from functools import wraps
 
 class TensorSaveHelper:
     _module_names_ = {}
@@ -120,6 +121,7 @@ def register_hook(module: torch.nn.Module):
         TensorSaveHelper._module_names_[submodule] = name
     
 def register_hook_for_function(func, save_name="function"):
+    @wraps(func)
     def wrapper(*args, **kwargs):
         print_log(f"{save_name} {func.__name__} start", flush=True)
         check_nan_inf([args, kwargs], ["args", "kwargs"])
