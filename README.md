@@ -76,16 +76,16 @@ python -m pip install nnmoduletools
     model = YourModule()
     model.apply(register_hook) # <=== apply the hook to print log and save input output tensors
     ...
-    save_model_params(0) # <=== save the model params before training
+    save_model_params(model, 0) # <=== save the model params before training
     # in your training loop
     for step in range(1, total_steps+1):
         output = model.forward(input)
         loss = loss_function(output, target)
         loss.backward()
         combine_npz(step) # <=== combine input and output tensors into large npzs
-        save_model_grads(step) # <=== save the model grads after backward pass
+        save_model_grads(model, step) # <=== save the model grads after backward pass
         optimizer.step()
-        save_model_params(step) # <=== save the model params after optim update
+        save_model_params(model, step) # <=== save the model params after optim update
         save_tensors(tensor_to_save, name_to_save, dir_to_save, save_grad_instead) # <=== save the tensor you want to given directory. You can save grad instead by passing save_grad_instead=True
 
     ```

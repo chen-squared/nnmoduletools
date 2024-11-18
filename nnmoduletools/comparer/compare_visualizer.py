@@ -1189,19 +1189,33 @@ def calc_similarity(target, ref, mask=None):
     else:
         target_flatten = target[mask == 1].flatten().astype(float)
         ref_flatten = ref[mask == 1].flatten().astype(float)
-    # compare similarity as npz_tool does
+
     if np.all(target_flatten == ref_flatten):
         return {"equal": "all equal"}
+
+    # if nan or inf are not equal, return a special failure
+    target_nan = np.where(np.isnan(target_flatten))
+    ref_nan = np.where(np.isnan(ref_flatten))
+    target_posinf = np.where(np.isposinf(target_flatten))
+    ref_posinf = np.where(np.isposinf(ref_flatten))
+    target_neginf = np.where(np.isneginf(target_flatten))
+    ref_neginf = np.where(np.isneginf(ref_flatten))
+    if not (
+        np.array_equal(target_nan, ref_nan) and
+        np.array_equal(target_posinf, ref_posinf) and
+        np.array_equal(target_neginf, ref_neginf)
+    ):
+        return {"similarity": (-1.0, -np.inf, -np.inf)}                             
 
     close = close_order(target_flatten, ref_flatten)
     if close >= 3:
         return {"close_order": close}
 
-    target_flatten[np.isnan(target_flatten)] = 0.0
-    ref_flatten[np.isnan(ref_flatten)] = 0.0
-    target_flatten[np.isposinf(target_flatten)] = 10000.0
-    target_flatten[np.isneginf(target_flatten)] = -10000.0
-    ref_flatten[np.isposinf(ref_flatten)] = 10000.0
-    ref_flatten[np.isneginf(ref_flatten)] = -10000.0
+    target_flatten[target_nan] = 0.0
+    ref_flatten[ref_nan] = 0.0
+    target_flatten[target_posinf] = 10000.0
+    target_flatten[target_neginf] = -10000.0
+    ref_flatten[ref_posinf] = 10000.0
+    ref_flatten[ref_neginf] = -10000.0
     
     return {"similarity": calc_similarity_opt(target_flatten, ref_flatten)}
