@@ -196,7 +196,8 @@ class LogReader:
         self.rank = rank
         self.dir = Path.cwd() if dir is None else Path(dir)
         self.topic = topic
-        for device in devices:
+        self.devices = devices
+        for device in self.devices:
             setattr(self.__class__, f"{device}_dir", property(lambda self, device=device: self.get_dir(device)))
             setattr(self.__class__, f"{device}_dirs", property(lambda self, device=device: self.get_dirs(device)))
     
@@ -225,3 +226,13 @@ class LogReader:
                     ret.append(folder)
                     continue
         return ret
+    
+    def show_dirs(self, device):
+        dirs = self.get_dirs(device)
+        print(f"{device}_dirs: {'None' if not dirs else ''}")
+        for i, d in enumerate(dirs):
+            print(f" {i}: {d.name}")
+            
+    def show_all_dirs(self):
+        for device in self.devices:
+            self.show_dirs(device)
