@@ -648,6 +648,27 @@ class NPZWrapper:
                           vmin=vmin, vmax=vmax,
                           save_fig=save_fig, save_path=save_path, **_attr)
 
+    def check_nan_inf(self, tensor=None):
+        if tensor is None:
+            tensors = self.keys()
+        else:
+            if isinstance(tensor, list):
+                for ts in tensor:
+                    assert ts in self.keys()
+                tensors = tensor
+            else:
+                tensors = [tensor]
+        nan_inf_dict = {
+            (True, True): ("has nan and inf ×", 'red'),
+            (True, False): ("has nan ×", 'red'),
+            (False, True): ("has inf ×", 'red'),
+            (False, False): ("pass √", 'green')
+        }
+        for key in tensors:
+            darray = self[key]
+            has_nan, has_inf = np.any(np.isnan(darray)), np.any(np.isinf(darray))
+            nan_inf, color = nan_inf_dict[(has_nan, has_inf)]
+            print(color_str(f"tensor='{key}', # {nan_inf}", color))
 
 class NPZComparer:
     def __init__(self, target, ref, allow_reshape=True):
@@ -1073,6 +1094,12 @@ class NPZComparer:
                 for i in range(len(to_plot)):
                     iostream = processes[i].get()
                     print(iostream.getvalue())
+
+    def check_nan_inf(self, tensor=None):
+        print("Target:")
+        self.target.check_nan_inf(tensor)
+        print("Ref:")
+        self.ref.check_nan_inf(tensor)
                       
   
 def report_one_tensor(target, ref, tensor, abs_tol, rel_tol, figsize, save_fig, output_dir):

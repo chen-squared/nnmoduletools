@@ -62,7 +62,7 @@ def check_nan_inf(tensors, names):
         print_log(f"- nan and inf check: {', '.join([name for name in pass_names])} pass", flush=True)
     if fail_names:
         print_log(f"- nan and inf check: {', '.join([name for name in fail_names])} fail", flush=True)
-        # pdb.set_trace()
+        # breakpoint()
             
 def register_hook(module: torch.nn.Module):
     def pre_hook(module, args, kwargs):
@@ -236,3 +236,20 @@ class LogReader:
     def show_all_dirs(self):
         for device in self.devices:
             self.show_dirs(device)
+            
+def combine_incomplete_npz(rank, step, cwd=None):
+    cwd = Path.cwd() if cwd is None else Path(cwd)
+    if list(cwd.glob(f"rank_{rank}_result_{step}.npz")):
+        print(f"rank_{rank}_result_{step}.npz already exists")
+        return
+    lst = list(cwd.glob(f"rank_{rank}_*.npz"))
+    to_save = {}
+    for file in lst:
+        name = file.stem.replace(f"rank_{rank}_", "")
+        to_save[name] = dict(np.load(file).items())
+        os.remove(file)
+    if to_save:
+        save_fn = cwd / f"rank_{rank}_result_{step}.npz"
+        np.savez(save_fn, **to_flat_dict(to_save))
+        print(f"saved combined incomplete in {save_fn}", flush=True)
+        del to_save
