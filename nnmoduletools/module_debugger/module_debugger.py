@@ -5,6 +5,7 @@ import numpy as np
 import os
 from pathlib import Path
 from functools import wraps
+from tqdm import tqdm
 
 class TensorSaveHelper:
     _module_names_ = {}
@@ -30,7 +31,7 @@ def cache_result(name):
 def combine_npz(step):
     for io, lst in (("input", TensorSaveHelper._input_list), ("output", TensorSaveHelper._output_list), ("result", TensorSaveHelper._result_list)):
         to_save = {}
-        for name in lst:
+        for name in tqdm(lst, desc=f"Combining {io}: Reading npz files", position=read_rank(), disable=not lst):
             to_save[name] = dict(np.load(get_log_file_path(f"results/rank_{read_rank()}_{name}.npz")).items())
             os.remove(get_log_file_path(f"results/rank_{read_rank()}_{name}.npz"))
         if to_save:
@@ -88,7 +89,7 @@ def register_hook(module: torch.nn.Module):
         check_nan_inf([grad_output, dict(module.named_parameters())], ["grad_output", "parameters"])
         save_result_tensors(grad_output, f"backward_input_{module_name}")
         increase_indent()
-        
+
     def backward_hook(module, grad_input, grad_output):
         decrease_indent()
         module_name = TensorSaveHelper._module_names_[module]
@@ -96,7 +97,7 @@ def register_hook(module: torch.nn.Module):
         check_nan_inf([grad_input], "grad_input")
         save_result_tensors(grad_input, f"backward_output_{module_name}")
         print_log(f"{module_name} ({class_name}) backward end", flush=True)
-    
+
     if not_started():
         rank = int(os.environ.get("RANK", "0"))
         local_rank = int(os.environ.get("REAL_LOCAL_RANK", "0"))
@@ -106,20 +107,20 @@ def register_hook(module: torch.nn.Module):
             device = get_accelerator().device_name()
         except ImportError:
             device = os.environ.get("DBG_DEVICE", "unknown")
-        
+    
         record_device(device)
         record_rank(rank)
         record_local_rank(local_rank)
         record_topic(topic)
         mark_start()
-    
+
     module.register_forward_pre_hook(pre_hook, with_kwargs=True)
     module.register_forward_hook(post_hook)
     module.register_full_backward_pre_hook(pre_backward_hook)
     module.register_full_backward_hook(backward_hook)
     for name, submodule in module.named_modules(prefix="model"):
         TensorSaveHelper._module_names_[submodule] = name
-    
+
 def register_hook_for_function(func, save_name="function"):
     @wraps(func)
     def wrapper(*args, **kwargs):
@@ -139,7 +140,7 @@ def register_hook_for_Function(cls: torch.autograd.Function):
     cls.forward = register_hook_for_function(cls.forward, save_name=cls.__name__)
     cls.backward = register_hook_for_function(cls.backward, save_name=cls.__name__)
     return cls
-    
+
 def save_tensors(tensors, name, dir=".", save_grad_instead=False, grad_attr="grad"):
     if not strtobool(os.environ.get("DBG_SAVE_ALL", "0")):
         return
@@ -181,7 +182,7 @@ def save_model_params(module, step, name_filter=None):
         save_tensors({k: v for k, v in module.named_parameters() if name_filter(k)}, f"params_{step}", "params")
     else:
         save_tensors(dict(module.named_parameters()), f"params_{step}", "params")
-   
+
 def save_model_grads(module, step, name_filter=None, grad_attr="grad"):
     if not strtobool(os.environ.get("DBG_SAVE_ALL", "0")) and not strtobool(os.environ.get("DBG_SAVE_GRADS", "0")):
         return
@@ -244,7 +245,7 @@ def combine_incomplete_npz(rank, step, cwd=None):
         return
     lst = list(cwd.glob(f"rank_{rank}_*.npz"))
     to_save = {}
-    for file in lst:
+    for file in tqdm(lst, desc=f"Combining: Reading npz files"):
         name = file.stem.replace(f"rank_{rank}_", "")
         to_save[name] = dict(np.load(file).items())
         os.remove(file)
