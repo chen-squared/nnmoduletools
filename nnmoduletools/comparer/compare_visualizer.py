@@ -472,14 +472,20 @@ class NPZWrapper:
     def __init__(self, npz, role="darray"):
         if isinstance(npz, (str, Path)):
             self.npz = np.load(npz)
-        elif isinstance(npz, (np.lib.npyio.NpzFile, dict, NPZErrWrapper)):
+        elif isinstance(npz, (np.lib.npyio.NpzFile, NPZErrWrapper)):
             self.npz = npz
+        elif isinstance(npz, dict):
+            self.npz = {key: value.detach().cpu().numpy() if isinstance(value, torch.Tensor) else value 
+                        for key, value in npz.items() if isinstance(value, (torch.Tensor, np.ndarray))}
+            invalid_types = [type(value) for value in npz.values() if not isinstance(value, (torch.Tensor, np.ndarray))]
+            if invalid_types:
+                raise TypeError(f"Invalid types in dict: {invalid_types}")
         elif isinstance(npz, np.ndarray):
             self.npz = {'darray': npz}
         elif isinstance(npz, torch.Tensor):
             self.npz = {'darray': npz.detach().cpu().numpy()}
         else:
-            raise TypeError
+            raise TypeError(f"Invalid type of npz: {type(npz)}")
         self.role = role
 
     def keys(self):

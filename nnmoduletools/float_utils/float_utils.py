@@ -61,8 +61,9 @@ class floating:
             if isinstance(memory, floating):
                 self.memory = self.encode(memory.value)
             else:
+                memory = np.array(memory, dtype=self.memory_dtype)
                 assert np.all(0 <= memory) and np.all(memory < (1 << self.bits))
-                self.memory = np.array(memory, dtype=self.memory_dtype)
+                self.memory = memory
 
     def __repr__(self):
         elem_repr = f"%#.10g(0x%0{self.bits // 4}x)"
