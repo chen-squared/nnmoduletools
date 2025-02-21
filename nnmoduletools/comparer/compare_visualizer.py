@@ -296,17 +296,33 @@ def get_data_dist(darray, data_mask):
     return real_mean, real_min, real_max
 
 
-def plot_2d_array(diff, data_mask=None, title="", figsize=6, vmin=-0.1, vmax=0.1, h_split=None, w_split=None, save_fig=False, save_path=None, downsample_threshold=5000):
-    if downsample_threshold > 0 and h_split and w_split and (diff.size > downsample_threshold ** 2):
+def data_resample(darray, data_mask, scale, is_diff=False):
+    if is_diff:
+        # make diff data more clear
+        darray_tensor = torch.tensor(darray, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+        pooled_max = torch.nn.functional.max_pool2d(darray_tensor, kernel_size=scale, stride=scale).squeeze()
+        pooled_min = -torch.nn.functional.max_pool2d(-darray_tensor, kernel_size=scale, stride=scale).squeeze()
+        new_array = torch.where(torch.abs(pooled_max) > torch.abs(pooled_min), pooled_max, pooled_min).numpy()
+    else:
+        # new_array = torch.nn.functional.avg_pool2d(darray_tensor, kernel_size=scale, stride=scale).squeeze()
+        start = scale // 2
+        new_array = darray[start::scale, start::scale]
+
+    new_data_mask = None
+    if data_mask is not None:
+        data_mask_tensor = torch.tensor(data_mask, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+        new_data_mask = torch.nn.functional.max_pool2d(data_mask_tensor, kernel_size=scale, stride=scale).squeeze().numpy()
+
+    return new_array, new_data_mask
+
+def plot_2d_array(diff, data_mask=None, title="", figsize=6, vmin=-0.1, vmax=0.1, h_split=None, w_split=None, save_fig=False, save_path=None, dpi=100, is_diff=False):
+    if dpi > 0 and h_split and w_split and figsize * dpi < diff.shape[1]:
+        scale = math.ceil(diff.shape[1] / (figsize * dpi) )
         warnings.warn(
-                "The data size is too large. To accelerate plotting, downsampling the data.", Warning)
-        scale = math.ceil(diff.size // (downsample_threshold ** 2) )
-        start = (scale - 1) // 2
-        diff = diff[start::scale, start::scale]
-        if data_mask is not None:
-            data_mask = data_mask[start::scale, start::scale]
-        h_split = h_split // scale
-        w_split = w_split // scale
+                f"The data size is large. To accelerate plotting, resampling the data using scale={scale}. As a result, the plot will not represent the exact values of the data. To avoid resampling, pass dpi=0 or increase figsize or dpi.", Warning)
+        diff, data_mask = data_resample(diff, data_mask, scale, is_diff)
+        h_split = h_split / scale
+        w_split = w_split / scale
     _plot_2d_array(diff, data_mask, title, figsize, vmin, vmax, h_split, w_split, save_fig, save_path)
 
 def _plot_2d_array(diff, data_mask=None, title="", figsize=6, vmin=-0.1, vmax=0.1, h_split=None, w_split=None, save_fig=False, save_path=None):
@@ -324,10 +340,10 @@ def _plot_2d_array(diff, data_mask=None, title="", figsize=6, vmin=-0.1, vmax=0.
         pos_inf_mask = np.where(np.isposinf(diff).astype(float) * data_mask, 9, np.nan)
         neg_inf_mask = np.where(np.isneginf(diff).astype(float) * data_mask, 4, np.nan)
         diff[data_mask == 0] += np.nan
-    if np.any(nan_mask > 0): plt.imshow(nan_mask, 'Greys', vmin=0, vmax=1.1, interpolation="nearest")
-    if np.any(pos_inf_mask > 0): plt.imshow(pos_inf_mask, 'Greens', vmin=0, vmax=10, interpolation="nearest")
-    if np.any(neg_inf_mask > 0): plt.imshow(neg_inf_mask, 'Greens', vmin=0, vmax=10, interpolation="nearest")
-    plt.imshow(diff, 'bwr', vmin=vmin, vmax=vmax, interpolation="nearest")
+    if np.any(nan_mask > 0): plt.imshow(nan_mask, 'Greys', vmin=0, vmax=1.1, interpolation="none", resample=False)
+    if np.any(pos_inf_mask > 0): plt.imshow(pos_inf_mask, 'Greens', vmin=0, vmax=10, interpolation="none", resample=False)
+    if np.any(neg_inf_mask > 0): plt.imshow(neg_inf_mask, 'Greens', vmin=0, vmax=10, interpolation="none", resample=False)
+    plt.imshow(diff, 'bwr', vmin=vmin, vmax=vmax, interpolation="none", resample=False)
     plt.xlim(-2, diff.shape[1] + 1)
     plt.ylim(diff.shape[0] + 1, -2)
     ax = plt.gca()
@@ -343,7 +359,7 @@ def _plot_2d_array(diff, data_mask=None, title="", figsize=6, vmin=-0.1, vmax=0.
         h_range = range(0, diff.shape[0], h_split)
     else:
         h_ticks = np.arange((h_split - 1) / 2, diff.shape[0], h_split)
-        h_range = range(diff.shape[0] // h_split)
+        h_range = range(int(round(diff.shape[0] / h_split, 0)))
     if w_split is None:
         w_split = max(1, int(diff.shape[1] / figwidth / 3 + 0.5))
         w_ticks = np.arange(0, diff.shape[1], w_split)
@@ -351,13 +367,13 @@ def _plot_2d_array(diff, data_mask=None, title="", figsize=6, vmin=-0.1, vmax=0.
         rotation = 'vertical' if diff.shape[1] > 100 + w_split else None
     else:
         w_ticks = np.arange((w_split - 1) / 2, diff.shape[1], w_split)
-        w_range = range(diff.shape[1] // w_split)
-        rotation = 'vertical' if diff.shape[1] // w_split >= 100 else None
+        w_range = range(int(round(diff.shape[1] / w_split, 0)))
+        rotation = 'vertical' if diff.shape[1] / w_split >= 100 else None
     plt.yticks(h_ticks, h_range)
-    for i in range(h_split, diff.shape[0], h_split):
+    for i in np.arange(h_split, diff.shape[0], h_split):
         plt.axhline(i - 0.5, 0, diff.shape[1], color='lightgrey')
     plt.xticks(w_ticks, w_range, rotation=rotation)
-    for i in range(w_split, diff.shape[1], w_split):
+    for i in np.arange(w_split, diff.shape[1], w_split):
         plt.axvline(i - 0.5, 0, diff.shape[0], color='lightgrey')
     title_len, title_line = len(title), figsize * 8
     plt.title(title if title_len <= title_line else "\n".join(
@@ -613,7 +629,7 @@ class NPZWrapper:
 
         return new_darray, data_mask, attr, print_shape_str
 
-    def plot(self, tensor=None, abs_tol=None, rel_tol=None, figsize=6, vmin=None, vmax=None, save_fig=False, save_path=None, downsample_threshold=5000, **kwargs):
+    def plot(self, tensor=None, abs_tol=None, rel_tol=None, figsize=6, vmin=None, vmax=None, save_fig=False, save_path=None, dpi=100, **kwargs):
         if tensor is None:
             warnings.warn(
                 "Your are plotting all the tensors in the NPZ file. This may cause problems when the file is large.", Warning)
@@ -654,7 +670,7 @@ class NPZWrapper:
             plot_2d_array(darray, data_mask, figsize=figsize,
                           vmin=vmin, vmax=vmax,
                           save_fig=save_fig, save_path=save_path,
-                          downsample_threshold=downsample_threshold, **_attr)
+                          dpi=dpi, **_attr)
 
     def check_nan_inf(self, tensor=None):
         if tensor is None:
@@ -831,7 +847,7 @@ class NPZComparer:
 
         return diff, data_mask1, _attr, compare
 
-    def plot_diff(self, tensor=None, abs_tol=0, rel_tol=0, figsize=6, vmin=None, vmax=None, save_fig=False, save_path=None, downsample_threshold=5000, **kwargs):
+    def plot_diff(self, tensor=None, abs_tol=0, rel_tol=0, figsize=6, vmin=None, vmax=None, save_fig=False, save_path=None, dpi=100, **kwargs):
         if tensor is None:
             warnings.warn(
                 "Your are plotting all the tensors in the NPZ file. This may cause problems when the file is large.", Warning)
@@ -861,7 +877,7 @@ class NPZComparer:
             plot_2d_array(darray, data_mask, figsize=figsize,
                           vmin=vmin_, vmax=vmax_,
                           save_fig=save_fig, save_path=save_path,
-                          downsample_threshold=downsample_threshold, **attr)
+                          dpi=dpi, is_diff=True, **attr)
 
     def plot(self, *args, **kwargs):
         self.plot_diff(*args, **kwargs)
@@ -872,7 +888,7 @@ class NPZComparer:
                      dtype=None, h_w_ratio=1/2,
                      save_fig=False, save_dir=None,
                      dump=False, verbose=False,
-                     downsample_threshold=5000):
+                     dpi=100):
         # auto calculate c_column and resize_hw according to h_w_ratio, default=1/2
         tensors = []
         if tensor is None:
@@ -919,21 +935,21 @@ class NPZComparer:
             if vmin is None and vmax is None:
                 # target_darray = self.target._get_darray(self, key, slices, index, c_columns, resize_hw, transpose_hw, mix_axis)
                 ref_darray, data_mask, _, _ = self.ref._get_darray(key, slices, index, c_columns, resize_hw, transpose_hw, mix_axis)
-                up_95 = np.percentile(np.abs(ref_darray[data_mask == 1]), 95)
+                up_95 = np.percentile(np.abs(ref_darray[np.isfinite(ref_darray) & (data_mask == 1)]), 95)
                 vmin, vmax = -up_95, up_95
 
             self.plot_vs(tensor=key, abs_tol=abs_tol, rel_tol=rel_tol, figsize=figsize, diffmin=diffmin, diffmax=diffmax, zero_point=zero_point, vmin=vmin, vmax=vmax,
                         slices=slices, index=index, c_columns=c_columns, resize_hw=resize_hw, transpose_hw=transpose_hw, mix_axis=mix_axis,
                         save_fig=save_fig, save_dir=save_dir,
                         dump=dump, verbose=verbose,
-                        downsample_threshold=downsample_threshold)
+                        dpi=dpi)
 
     def plot_vs(self, tensor=None, abs_tol=1e-8, rel_tol=1e-3, figsize=6, diffmin=-0.1, diffmax=0.1, 
                 zero_point=0.0, vmin=None, vmax=None,
                 slices=None, index=None, c_columns=32, resize_hw=None, transpose_hw=False, mix_axis=None,
                 save_fig=False, save_dir=None,
                 dump=False, verbose=False,
-                downsample_threshold=5000):
+                dpi=100):
         # archive the kwargs for next dump_vs
         self.archived_kwargs = {}
         self.archived_kwargs.update(
@@ -983,12 +999,12 @@ class NPZComparer:
             else:
                 target_path = ref_path = diff_path = None
 
-            self.target.plot(key, abs_tol=zp, rel_tol=scale, figsize=figsize, save_fig=save_fig, save_path=target_path, **kwargs)
-            self.ref.plot(key, abs_tol=zp, rel_tol=scale, figsize=figsize, save_fig=save_fig, save_path=ref_path, **kwargs)
+            self.target.plot(key, abs_tol=zp, rel_tol=scale, figsize=figsize, save_fig=save_fig, save_path=target_path, dpi=dpi, **kwargs)
+            self.ref.plot(key, abs_tol=zp, rel_tol=scale, figsize=figsize, save_fig=save_fig, save_path=ref_path, dpi=dpi, **kwargs)
             self.plot_diff(key, abs_tol=abs_tol, rel_tol=rel_tol, figsize=figsize,
                            vmin=diffmin, vmax=diffmax, 
                            save_fig=save_fig, save_path=diff_path,
-                           downsample_threshold=downsample_threshold, **kwargs)
+                           dpi=dpi, **kwargs)
             if dump:
                 self.dump_vs_plot(verbose=verbose)
 
