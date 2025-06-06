@@ -205,8 +205,8 @@ def model_tpu_comparer(fn):
 
 def get_nchw(shape, mix_axis):
     dims = len(shape)
-    reshaped = [1, 1, 1, 1]
     if mix_axis is None:
+        reshaped = [1, 1, 1, 1]
         if dims > 4:
             for i in range(2):
                 reshaped[- i - 1] = shape[- i - 1]
@@ -217,7 +217,8 @@ def get_nchw(shape, mix_axis):
             for i in range(dims):
                 reshaped[- i - 1] = shape[- i - 1]
     else:
-        assert dims - len(mix_axis) + 1 == 4
+        new_dims = dims - len(mix_axis) + 1
+        reshaped = [1] * new_dims
         dim = mix_axis[0]
         for i in range(1, len(mix_axis)):
             assert mix_axis[i] - mix_axis[i - 1] == 1
@@ -226,7 +227,9 @@ def get_nchw(shape, mix_axis):
         for i in range(dim):
             reshaped[i] = shape[i]
         for i in range(dims - dim - len(mix_axis)):
-            reshaped[3 - i] = shape[dims - i - 1]
+            reshaped[new_dims - i - 1] = shape[dims - i - 1]
+        if len(reshaped) > 4:
+            reshaped = get_nchw(reshaped, None)
     return reshaped
 
 
@@ -510,6 +513,8 @@ class NPZWrapper:
             self.npz = np.load(npz)
         elif isinstance(npz, (np.lib.npyio.NpzFile, NPZErrWrapper)):
             self.npz = npz
+        elif isinstance(npz, NPZWrapper):
+            self.npz = npz.npz
         elif isinstance(npz, dict):
             self.npz = {key: value.detach().cpu().numpy() if isinstance(value, torch.Tensor) else value 
                         for key, value in npz.items() if isinstance(value, (torch.Tensor, np.ndarray))}
@@ -523,6 +528,14 @@ class NPZWrapper:
         else:
             raise TypeError(f"Invalid type of npz: {type(npz)}")
         self.role = role
+        self.reshape_keys = {}
+        
+    def add_reshape_key(self, key, shape):
+        if key in self.npz:
+            assert self.npz[key].size == np.prod(shape), f"Cannot reshape {key} from {self.npz[key].shape} to {shape}"
+            self.reshape_keys[key] = shape
+        else:
+            raise KeyError(f"Key '{key}' not found in NPZ file.")
 
     def keys(self):
         return self.npz.keys()
@@ -543,6 +556,9 @@ class NPZWrapper:
         return iter(self.keys())
 
     def __getitem__(self, key):
+        if key in self.reshape_keys:
+            shape = self.reshape_keys[key]
+            return np.reshape(self.npz[key], shape)
         return self.npz[key]
 
     def __setitem__(self, key, value):
@@ -712,12 +728,22 @@ class NPZComparer:
             self._error_keys = {}
             for key in tqdm(self.ref, desc="Loading NPZ"):
                 if key in self.target:
-                    if (self.allow_reshape and self.target[key].size != self.ref[key].size) or \
-                       (not self.allow_reshape and self.target[key].shape != self.ref[key].shape):
-                        print(f"Error: Tensor {key} shape not same: {self.target[key].shape} vs {self.ref[key].shape}.")
-                        self._error_keys[key] = 1
+                    if self.target[key].shape != self.ref[key].shape:
+                        if self.allow_reshape and self.target[key].size == self.ref[key].size:
+                            print(f"Warning: Tensor {key} shape not same: {self.target[key].shape} vs {self.ref[key].shape}. Reshaped target tensor to reference tensor shape.")
+                            self._keys[key] = 1
+                            self.target.add_reshape_key(key, self.ref[key].shape)
+                        else:
+                            print(f"Error: Tensor {key} shape not same: {self.target[key].shape} vs {self.ref[key].shape}.")
+                            self._error_keys[key] = 1
                     else:
-                        self._keys[key] = 1                   
+                        self._keys[key] = 1
+                    # if (self.allow_reshape and self.target[key].size != self.ref[key].size) or \
+                    #    (not self.allow_reshape and self.target[key].shape != self.ref[key].shape):
+                    #     print(f"Error: Tensor {key} shape not same: {self.target[key].shape} vs {self.ref[key].shape}.")
+                    #     self._error_keys[key] = 1
+                    # else:
+                    #     self._keys[key] = 1                   
             assert len(self._keys) > 0, 'No common data.'
         assert(isinstance(self._keys, dict) and isinstance(self._error_keys, dict)), "Keys not initialized!"
         return self._keys
@@ -911,7 +937,7 @@ class NPZComparer:
             if reshaped[0] > reshaped[1]:
                 slices = (None, *slices) if slices is not None else (None, )
                 sliced_shape = get_sliced_shape(original_shape, slices)
-                mix_axis = [dim + 1 for dim in mix_axis] if mix_axis is not None else None
+                mix_axis = tuple(dim + 1 for dim in mix_axis) if mix_axis is not None else None
                 reshaped = get_nchw(sliced_shape, mix_axis)
 
             n, c, h, w = reshaped

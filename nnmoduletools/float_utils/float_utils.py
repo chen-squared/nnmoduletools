@@ -79,11 +79,11 @@ if use_torch and all_torch:
 
         @property
         def value(self):
-            return self.to(torch.float32)
+            return torch.tensor(self.to(torch.float32), dtype=torch.float32)
 
         @property
         def memory(self):
-            return self.view(self.memory_dtype)
+            return torch.tensor(self.view(self.memory_dtype), dtype=self.memory_dtype)
 
 
     float32 = partial(floating, torch_dtype=torch.float32)
@@ -267,3 +267,8 @@ else:
 
     bf16 = bfloat16
     bfp16 = bfloat16
+    
+    float8_e4m3 = NotImplemented
+    fp8_e4m3 = float8_e4m3
+    float8_e5m2 = NotImplemented
+    fp8_e5m2 = float8_e5m2
