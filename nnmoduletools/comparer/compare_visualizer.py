@@ -1262,7 +1262,7 @@ def calc_similarity_opt(x, y):
     var_raw_zero_mean = max(x_2 - np.square(x_sum) / x.size, 0.0)
     var_noise_zero_mean = max((x_2 + y_2 - _2xy) - np.square(x_sum - y_sum) / x.size, 0.0)
     sqnr_sim = float('inf') if var_noise_zero_mean == 0 or var_raw_zero_mean == 0 else (10 * np.log10(var_raw_zero_mean / var_noise_zero_mean))
-    return cos_sim, euc_sim, sqnr_sim
+    return float(cos_sim), float(euc_sim), float(sqnr_sim)
 
 def calc_similarity(target, ref, mask=None):
     if mask is None:

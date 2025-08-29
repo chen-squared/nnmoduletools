@@ -36,7 +36,8 @@ if use_torch and all_torch:
     @apply_recursively()
     def tensor_to_fp32(tensor):
         if isinstance(tensor, torch.Tensor) and tensor.dtype.is_floating_point:
-            return torch.tensor(tensor, dtype=torch.float32)
+            return tensor.float().detach().clone()
+            # return torch.tensor(tensor, dtype=torch.float32)
         else:
             return tensor
 
@@ -79,11 +80,13 @@ if use_torch and all_torch:
 
         @property
         def value(self):
-            return torch.tensor(self.to(torch.float32), dtype=torch.float32)
+            return self.float().detach().clone()
+            # return torch.tensor(self.to(torch.float32), dtype=torch.float32)
 
         @property
         def memory(self):
-            return torch.tensor(self.view(self.memory_dtype), dtype=self.memory_dtype)
+            return self.view(self.memory_dtype).detach().clone()
+            # return torch.tensor(self.view(self.memory_dtype), dtype=self.memory_dtype)
 
 
     float32 = partial(floating, torch_dtype=torch.float32)
